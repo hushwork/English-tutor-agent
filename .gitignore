@@ -9,10 +9,8 @@ build/
 .env
 .env.local
 
-# Data (session files / stats — keep layout JSON as example)
+# Data (per-user session files)
 .english-tutor-data/
-session_*.json
-stats.json
 
 # OS
 .DS_Store

@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "english-tutor"
+version = "0.1.0"
+description = "AI English Tutor — practice daily with an LLM-powered conversational assistant"
+requires-python = ">=3.10"
+dependencies = [
+    "rich>=13.0.0",
+    "httpx>=0.27.0",
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "feedparser>=6.0.0",
+    "readability-lxml>=0.8.0",
+    "lxml>=5.0.0",
+    "edge-tts>=6.0.0",
+    "faster-whisper>=1.1.0",
+]
+
+[project.scripts]
+english-tutor = "english_tutor.cli:run"

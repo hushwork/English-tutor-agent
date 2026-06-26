@@ -1,0 +1,24 @@
+{
+  "workspace": "1",
+  "layout": "splith",
+  "windows": [
+    {
+      "app_id": "english-tutor",
+      "title": "English Tutor",
+      "x": 6,
+      "y": 36,
+      "width": 1272,
+      "height": 1398,
+      "command": "foot --app-id=english-tutor --title='English Tutor' python3 /home/ubuntu/workspace/english-tutor/run.py"
+    },
+    {
+      "app_id": "foot",
+      "title": "foot",
+      "x": 1282,
+      "y": 36,
+      "width": 1272,
+      "height": 1398,
+      "command": "foot"
+    }
+  ]
+}

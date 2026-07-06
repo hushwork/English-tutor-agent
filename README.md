@@ -489,6 +489,7 @@ This means the LLM didn't return valid JSON. The system has a multi-layer fallba
 ## Documentation
 
 - [Full Product Documentation](docs/PRODUCT_DOC.md) — learning theory, architecture, usage guide, cost analysis
+- [Immersion vs. Watching Movies](docs/PRODUCT_DOC.md#immersion-vs-watching-movies) — why Netflix isn't a replacement for structured input
 - [What Should You Feel After Immersion?](docs/PRODUCT_DOC.md#what-should-you-feel-after-immersion) — how to know if you're doing it right
 
 ---

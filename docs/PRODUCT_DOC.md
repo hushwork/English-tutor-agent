@@ -16,9 +16,10 @@
 6. [Commands](#commands)
 7. [Immersion Mode](#immersion-mode)
 8. [How to Use for Maximum Effect](#how-to-use-for-maximum-effect)
-9. [What Should You Feel After Immersion?](#what-should-you-feel-after-immersion)
-10. [Setup](#setup)
-11. [Daily Cost](#daily-cost)
+9. [Immersion vs. Watching Movies](#immersion-vs-watching-movies)
+10. [What Should You Feel After Immersion?](#what-should-you-feel-after-immersion)
+11. [Setup](#setup)
+12. [Daily Cost](#daily-cost)
 
 ---
 
@@ -332,6 +333,73 @@ After Pass 3: key vocabulary is revealed (English only, no translations) and a r
 - When anxious or facing a deadline (cortisol blocks synaptic plasticity)
 - Right after scrolling Chinese social media (Chinese network is primed, will dominate)
 - When exhausted (tired brain consolidates strong connections, prunes weak ones)
+
+---
+
+## Immersion vs. Watching Movies
+
+A common question: "If I just watch English movies or cartoons, isn't that the same thing?"
+
+No. Here's why.
+
+### Visual Cheating — your brain takes shortcuts
+
+When you watch a 90-minute movie, this is what actually happens:
+
+```
+Visuals (characters, expressions, scenes)
+  ↓ captures 80% of your attention
+"Oh, he's angry because the cat knocked over his coffee"
+  ↓
+You understood the story ← but NOT through English. Through vision.
+  ↓
+The English audio gets processed as background noise
+```
+
+The brain is lazy — it always chooses the most energy-efficient path. When visuals are rich enough to understand the plot, it simply won't expend effort processing the audio. This is called **visual masking**: the richer the visual information, the shallower the auditory processing.
+
+Immersion Mode's Pass 1 and Pass 3 **deliberately remove all text and visuals**. You only have one channel: English sound. The brain is forced to use it.
+
+### Subtitles make it worse
+
+| Subtitle type | Actual effect |
+|--------------|---------------|
+| Chinese subtitles | 🚫 Brain reads Chinese directly. English audio completely ignored. |
+| English subtitles | ⚠️ You're practicing reading, not listening. Sound→text and sound→meaning are different neural pathways. |
+| No subtitles | ✅ But only works if the content is exactly at your i+1 level — otherwise it's just incomprehensible noise. |
+
+Immersion Mode's design: Pass 1 no text (pure listening), Pass 2 add text (build mapping), Pass 3 remove text again (consolidate direct pathway). This is **deliberate alternating training** — movies can't do this.
+
+### Difficulty is uncontrollable
+
+Krashen's i+1 theory: learning happens when input is **just slightly above** your current level.
+
+- Too hard (i+5) → Can't understand anything → brain gives up → noise
+- Too easy (i-1) → Everything understood → no learning needed → boredom
+- Just right (i+1) → Mostly understood, small gaps to "guess" → **learning occurs**
+
+Movie difficulty is fixed. It's made for native speakers, not calibrated to your level. Immersion Mode has three adjustable difficulty levels (A2 / B1 / B2) and generates content **for your level**, not for a general audience.
+
+### No structured repetition
+
+You watch a movie once. Infants listen to the same story 50 times — each repetition consolidates neural pathways. Immersion Mode's 3-pass design (same content, different sensory channels, three times) mimics this. Procedural memory requires repetition.
+
+### Where movies DO help
+
+Movies have one advantage Immersion Mode can't replicate: **emotional binding**.
+
+A story that genuinely moves you will echo in your head for days. Those lines will surface on their own — not because you "learned" them, but because they're bonded to emotion. Emotion is the strongest memory glue.
+
+### The right strategy — both, in the right order
+
+```
+Immersion Mode (main course)  →  15 min daily, structured training
+English movies/shows (dessert) →  Watch freely, enjoy the story, don't stress about understanding
+```
+
+Gym analogy: Immersion Mode is practicing form with a trainer (deliberate practice). Movies are hiking on the weekend (still exercise, but not precise).
+
+**Movies are a good supplement, not a replacement.** Immersion Mode solves the three problems movies can't: visual cheating, mismatched difficulty, and lack of structured repetition.
 
 ---
 

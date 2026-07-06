@@ -16,8 +16,9 @@
 6. [Commands](#commands)
 7. [Immersion Mode](#immersion-mode)
 8. [How to Use for Maximum Effect](#how-to-use-for-maximum-effect)
-9. [Setup](#setup)
-10. [Daily Cost](#daily-cost)
+9. [What Should You Feel After Immersion?](#what-should-you-feel-after-immersion)
+10. [Setup](#setup)
+11. [Daily Cost](#daily-cost)
 
 ---
 
@@ -331,6 +332,71 @@ After Pass 3: key vocabulary is revealed (English only, no translations) and a r
 - When anxious or facing a deadline (cortisol blocks synaptic plasticity)
 - Right after scrolling Chinese social media (Chinese network is primed, will dominate)
 - When exhausted (tired brain consolidates strong connections, prunes weak ones)
+
+---
+
+## What Should You Feel After Immersion?
+
+This is one of the most important questions — and the answer is **not what you expect**. Most people quit because they feel the "wrong" thing and think the method isn't working. It is.
+
+### What you SHOULD feel
+
+#### 1. A vague, fuzzy impression ("residue", not "mastery")
+
+> After you close the screen, if someone asks "What was that about?", you can only say something like:  
+> "Something about... rain? Waiting for a bus? Someone in a café...?"  
+> — You can't recall details, but there's a **hazy outline** left in your mind.
+
+**This is correct.** This is exactly what an infant feels after hearing a conversation they can't fully parse. Your brain recorded the *scene*, not the words. Procedural memory stores sensory impressions, not bullet-point facts.
+
+#### 2. A word or phrase "echoing" in your head
+
+> You put the phone down and go get water. Suddenly a voice pops into your head:  
+> *"...the steam rising from the cup..."*  
+> You didn't actively recall it — it **surfaced on its own**.
+
+This is the basal ganglia at work. It has stored the sound fragment as an auditory memory trace that requires no conscious retrieval. This is the same mechanism that makes you hum a song you heard earlier without trying to remember it.
+
+**If this happens, you're doing it right.**
+
+#### 3. Mild fatigue (but not irritation)
+
+> After 15-20 minutes, your brain feels "full" — not exhausted to the point of frustration, but like after a satisfying meal: a sense of **contented heaviness**.
+
+Procedural learning is physical. Neurons are forming new synaptic connections, which consumes ATP (energy). Real learning causes **mild physiological fatigue**. If you finish and feel completely unchanged, you were probably just "hearing sounds" rather than absorbing.
+
+#### 4. An urge to be quiet for a while
+
+> After immersion, you don't feel like immediately checking your phone or switching to Chinese content. You want to sit still, daydream, or take a slow walk.
+
+This is the signal behind our `_quiet_period_reminder` in the code. It's not a rule we invented — it's what the brain naturally signals. Your brain is running background consolidation and saying: "Don't disturb me, I'm saving something."
+
+### A quick self-check (3 questions after each session)
+
+| Question | Normal answer | Warning sign |
+|----------|--------------|--------------|
+| "What was that about?" | "Rainy day... a child at the window? Not sure." | Either a perfect retelling, or absolutely nothing |
+| "Any words echoing in your head?" | One or two words or phrases that keep surfacing on their own | Nothing at all, or only accessible through deliberate recall |
+| "What's my state right now?" | A bit full, want quiet, don't want to check phone | Energetic and unchanged, or anxious "I learned nothing" |
+
+### Red flags (you're using the wrong system)
+
+| Feeling | What it means |
+|---------|--------------|
+| **Anxiety** — "I learned nothing, I'm wasting time" | You're using the hippocampus, expecting declarative memory results. Relax and let procedural memory work. |
+| **Can recite** — you "memorized" the passage | You translated or pushed too hard. Try being looser next time. The goal isn't to *remember* the passage — it's to *experience* it. |
+| **Zero impression** — no trace left at all | Difficulty may be wrong (too hard), or you were multitasking. |
+| **Irritation** — "I want this to end" | Likely sympathetic nervous system dominance (anxiety/tension), not a learning state. Try the breathing guide more seriously. |
+
+### The single most important mindset shift
+
+**The normal feeling is not "what did I learn?" but "what did I experience?"**
+
+You don't need to quiz yourself at the end to verify. Procedural memory validates itself **next time** — tomorrow, when you hear similar content, you'll notice an inexplicable familiarity: the speed, the intonation, the phrasing feel *a little more natural* than they did yesterday.
+
+It's like going to the gym. Your muscles don't grow during the workout. But the next day, you feel sore.
+
+Immersion's "soreness" is: **those words echoing in your head, and that hard-to-pin-down sense that you somehow understood a little more.**
 
 ---
 

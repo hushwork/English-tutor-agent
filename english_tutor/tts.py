@@ -45,9 +45,9 @@ def _speak_quick(text: str, rate: int = 0) -> bool:
         return False
 
 
-def _speak_sync(text: str, voice: str = "") -> bool:
+def _speak_sync(text: str, voice: str = "", rate: int = 0) -> bool:
     """Blocking TTS via speech-dispatcher. Returns True if played."""
-    return _speak_quick(text)
+    return _speak_quick(text, rate=rate)
 
 
 # ── Edge-TTS (high-quality, async, saves file) ─────────────────────
@@ -79,11 +79,12 @@ async def _speak_edge(
 
 # ── Public API ──────────────────────────────────────────────────────
 
-def speak_now(text: str) -> bool:
+def speak_now(text: str, rate: int = 0) -> bool:
     """Quickly speak text aloud using system speech-dispatcher.
 
     Args:
         text: Text to speak (will be truncated to 2000 chars for SPD).
+        rate: Speech rate offset from default (-50 to +50). Negative = slower.
 
     Returns:
         True if speech was played successfully.
@@ -91,7 +92,7 @@ def speak_now(text: str) -> bool:
     # Truncate very long text
     if len(text) > 2000:
         text = text[:1997] + "..."
-    return _speak_sync(text)
+    return _speak_sync(text, rate=rate)
 
 
 async def speak_to_file(

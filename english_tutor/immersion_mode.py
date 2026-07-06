@@ -125,6 +125,17 @@ TYPE_GUIDES: dict[str, str] = {
     "observation": "A first-person reflection on something interesting noticed today. Intimate, thoughtful, like a journal entry.",
 }
 
+def _speed_label(rate: int) -> str:
+    if rate <= -15:
+        return '🐢 Very Slow'
+    elif rate <= -5:
+        return '🐌 Slower'
+    elif rate >= 15:
+        return '🐇 Faster'
+    elif rate >= 5:
+        return '🐎 Fast'
+    return 'Normal'
+
 
 @dataclass
 class ImmersionContent:
@@ -360,15 +371,17 @@ class ImmersionSession:
                     console.print(f"[yellow]Keep current: {self.difficulty}[/yellow]")
             elif choice in ("-", "slower"):
                 self.speech_rate = max(-30, self.speech_rate - 5)
-                console.print(f"[dim]Speech rate offset: {self.speech_rate} (slower)[/dim]")
+                speed_label = _speed_label(self.speech_rate)
+                console.print(f"[dim]Speech speed: {speed_label}[/dim]")
                 # Replay current pass audio at new rate
                 if self.current_content:
-                    speak_now(self.current_content.passage)
+                    speak_now(self.current_content.passage, rate=self.speech_rate)
             elif choice in ("+", "faster"):
                 self.speech_rate = min(30, self.speech_rate + 5)
-                console.print(f"[dim]Speech rate offset: {self.speech_rate} (faster)[/dim]")
+                speed_label = _speed_label(self.speech_rate)
+                console.print(f"[dim]Speech speed: {speed_label}[/dim]")
                 if self.current_content:
-                    speak_now(self.current_content.passage)
+                    speak_now(self.current_content.passage, rate=self.speech_rate)
             else:
                 # Default (Enter, n, next, empty): generate new content
                 try:
@@ -397,7 +410,7 @@ class ImmersionSession:
             width=WIDTH,
         ))
         console.print(f"[yellow]🎧 Now playing...[/yellow]")
-        speak_now(c.passage)
+        speak_now(c.passage, rate=self.speech_rate)
         console.print()
         console.print("[green]✓ Done[/green] [dim]— What did you feel? Any words stand out?[/dim]")
         self._wait_for_enter("Press Enter for Pass 2")
@@ -422,7 +435,7 @@ class ImmersionSession:
         ))
 
         console.print("[yellow]🔊 Playing while you read...[/yellow]")
-        speak_now(c.passage)
+        speak_now(c.passage, rate=self.speech_rate)
         console.print("[green]✓ Done[/green] [dim]— Did the words look like you imagined?[/dim]")
         self._wait_for_enter("Press Enter for Pass 3")
 
@@ -437,7 +450,7 @@ class ImmersionSession:
             width=WIDTH,
         ))
         console.print("[yellow]🎧 Final listen...[/yellow]")
-        speak_now(c.passage)
+        speak_now(c.passage, rate=self.speech_rate)
         console.print()
         console.print("[green]✓ Done[/green] [dim]— How much more did you understand this time?[/dim]")
 
@@ -504,7 +517,7 @@ class ImmersionSession:
         console.print(IMMERSION_HELP)
         console.print()
         console.print(f"[dim]Difficulty: {DIFFICULTY_LABELS[self.difficulty]}  |  "
-                      f"Speech speed: default[/dim]")
+                      f"Speech speed: {_speed_label(self.speech_rate)}[/dim]")
         console.print()
 
     async def _breathing_guide(self):

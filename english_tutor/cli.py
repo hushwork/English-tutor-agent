@@ -18,6 +18,7 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
+from english_tutor.immersion_mode import immersion_session
 from english_tutor.llm_client import LLMClient
 from english_tutor.memory import ConversationMemory
 from english_tutor.reading_mode import reading_session
@@ -61,6 +62,7 @@ COMMANDS = {
     "/read": "Fetch and read today's English articles",
     "/speak": "Read the last response aloud (TTS)",
     "/record": "Record voice and transcribe (e.g. /record 5)",
+    "/immerse": "English immersion mode — listen first, understand naturally",
     "/save": "Save and exit",
     "/quit": "Exit the tutor",
 }
@@ -322,6 +324,19 @@ async def chat_loop(client: LLMClient, memory: ConversationMemory, sr: SpacedRep
             elif cmd == "/read":
                 console.print("[cyan]Opening reading mode...[/cyan]")
                 await reading_session(client, memory, sr)
+                console.print("[green]Back to conversation![/green]")
+                continue
+            elif cmd.startswith("/immerse"):
+                # Parse optional topic and difficulty: /immerse cooking easy
+                parts = user_input.split(maxsplit=2)
+                topic = None
+                difficulty = "medium"
+                for part in parts[1:]:
+                    if part.lower() in ("easy", "medium", "hard"):
+                        difficulty = part.lower()
+                    else:
+                        topic = part
+                await immersion_session(client, topic=topic, difficulty=difficulty)
                 console.print("[green]Back to conversation![/green]")
                 continue
             else:

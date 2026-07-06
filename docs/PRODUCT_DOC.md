@@ -430,7 +430,11 @@ DEEPSEEK_API_KEY=sk-your-key-here
 ### Running
 
 ```bash
+# CLI mode
 python3 run.py
+
+# Web mode (access from your phone!)
+python3 run.py --web --host 0.0.0.0 --port 8080
 ```
 
 ---

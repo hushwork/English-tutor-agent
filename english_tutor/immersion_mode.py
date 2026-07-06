@@ -93,15 +93,18 @@ TOPIC_SEEDS = [
 
 # ── Content generation prompt ──────────────────────────────────────
 
-IMMERSION_SYSTEM_PROMPT = """You are an English immersion content generator for an intermediate (B1/CET-4) Chinese learner. Generate short, vivid English passages for LISTENING and READING immersion practice.
+IMMERSION_SYSTEM_PROMPT = """You are an English immersion content generator. Your ONLY job is to output a valid JSON object. Nothing else.
 
-## CRITICAL RULES
-- Output ONLY English. No Chinese characters, no pinyin, no translations, no explanations in Chinese.
-- Write naturally — the way a native speaker would tell a story or describe something to a friend.
+## ABSOLUTE REQUIREMENT
+You MUST output ONLY a single JSON object on one line, with NO markdown fences, NO introductions, NO explanations, NO extra text before or after. Just the JSON.
+
+## Content rules
+- Write a short, vivid English passage (80-150 words) for LISTENING practice.
+- Write naturally — the way a native speaker would tell a story.
 - Be concrete and sensory: describe what you SEE, HEAR, SMELL, FEEL, TASTE.
-- Include 3-5 key vocabulary items that repeat naturally 2-3 times within the passage.
-- Keep the passage between 80 and 150 words.
+- Include 3-5 key vocabulary items that repeat naturally 2-3 times.
 - Make it emotionally engaging — surprise, wonder, nostalgia, curiosity, joy.
+- NO Chinese characters, NO pinyin, NO translations.
 
 ## Difficulty: {difficulty}
 {level_guide}
@@ -111,8 +114,8 @@ IMMERSION_SYSTEM_PROMPT = """You are an English immersion content generator for 
 ## Content type: {content_type}
 {type_guide}
 
-## Output format — valid JSON only, no other text:
-{{"title": "Short engaging title (4-8 words)", "key_words": ["word1", "word2", "word3", "word4"], "passage": "Full passage text (80-150 words). Use vivid sensory English.", "closing_thought": "A single reflective question or thought (1 sentence) to leave the listener thinking."}}"""
+## REQUIRED JSON FORMAT (your entire response must be exactly this structure):
+{{"title": "Short engaging title (4-8 words)", "key_words": ["word1", "word2", "word3"], "passage": "Full passage text 80-150 words. Use vivid sensory English. Escape double quotes inside with backslash.", "closing_thought": "One reflective question (1 sentence)."}}"""
 
 TYPE_GUIDES: dict[str, str] = {
     "daily_scene": "Describe a vivid moment from everyday life — making coffee, walking in the rain, cooking dinner, watching the sunset. Focus on sensory details.",
@@ -186,12 +189,15 @@ class ImmersionSession:
             {"role": "user", "content": (
                 f"Generate a {CONTENT_TYPE_LABELS.get(content_type, content_type)} "
                 f"immersion passage at {self.difficulty} level. "
-                f"Topic: {topic_seed}. Output valid JSON only."
+                f"Topic: {topic_seed}. Output ONLY the JSON object, nothing else."
             )},
         ]
 
         try:
-            response = await self.client.chat_sync(messages, temperature=0.9, max_tokens=512)
+            response = await self.client.chat_sync(
+                messages, temperature=0.7, max_tokens=512,
+                response_format={"type": "json_object"},
+            )
         except Exception as e:
             console.print(f"[red]Failed to generate content: {e}[/red]")
             raise
@@ -199,12 +205,15 @@ class ImmersionSession:
         # Parse JSON from LLM response
         data = self._parse_json_response(response)
 
+        # Clean passage text: strip any markdown or artifacts
+        passage = self._clean_passage(data.get("passage", response))
+
         content = ImmersionContent(
             title=data.get("title", "Listening Passage"),
             content_type=content_type,
             difficulty=self.difficulty,
             key_words=data.get("key_words", []),
-            passage=data.get("passage", response.strip()),
+            passage=passage,
             closing_thought=data.get("closing_thought", "What did you notice in what you heard?"),
         )
 
@@ -255,6 +264,27 @@ class ImmersionSession:
 
         console.print("[yellow]Warning: Could not parse JSON from LLM response, using raw text.[/yellow]")
         return {"passage": text}
+
+    @staticmethod
+    def _clean_passage(text: str) -> str:
+        """Clean up passage text by removing markdown artifacts and excessive whitespace."""
+        # Remove markdown code fences if present
+        lines = text.strip().split("\n")
+        cleaned = []
+        for line in lines:
+            # Skip lines that are just markdown fences
+            stripped = line.strip()
+            if stripped in ("```", "```json", "```markdown"):
+                continue
+            # Skip lines that look like JSON fragments (leftover from bad parsing)
+            if stripped.startswith('{"') and stripped.endswith('}'):
+                continue
+            cleaned.append(line)
+        result = "\n".join(cleaned).strip()
+        # Remove leading/trailing quotes that might wrap the entire passage
+        if result.startswith('"') and result.endswith('"'):
+            result = result[1:-1]
+        return result
 
     async def run(self):
         """Run the immersion session loop."""

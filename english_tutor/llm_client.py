@@ -83,15 +83,23 @@ class LLMClient:
         messages: list[dict],
         temperature: float = 0.7,
         max_tokens: int = 2048,
+        response_format: dict | None = None,
     ) -> str:
-        """Non-streaming variant — returns the full response string."""
-        payload = {
+        """Non-streaming variant — returns the full response string.
+
+        Args:
+            response_format: Optional format hint, e.g. {"type": "json_object"}
+                to force JSON output (supported by DeepSeek and most OpenAI-compatible APIs).
+        """
+        payload: dict = {
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": False,
         }
+        if response_format is not None:
+            payload["response_format"] = response_format
         resp = await self._client.post("/chat/completions", json=payload)
         if resp.status_code != 200:
             raise RuntimeError(

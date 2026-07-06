@@ -229,23 +229,27 @@ async def immerse_generate(request: Request):
         {"role": "user", "content": (
             f"Generate a {CONTENT_TYPE_LABELS.get(content_type, content_type)} "
             f"immersion passage at {difficulty} level. "
-            f"Topic: {topic}. Output valid JSON only."
+            f"Topic: {topic}. Output ONLY the JSON object, nothing else."
         )},
     ]
 
     try:
-        response = await cl.chat_sync(messages, temperature=0.9, max_tokens=512)
+        response = await cl.chat_sync(
+            messages, temperature=0.7, max_tokens=512,
+            response_format={"type": "json_object"},
+        )
     except Exception as e:
         raise HTTPException(500, f"LLM error: {e}")
 
     data = ImmersionSession._parse_json_response(response)
+    passage = ImmersionSession._clean_passage(data.get("passage", response))
 
     return JSONResponse({
         "title": data.get("title", "Listening Passage"),
         "content_type": content_type,
         "difficulty": difficulty,
         "key_words": data.get("key_words", []),
-        "passage": data.get("passage", response.strip()),
+        "passage": passage,
         "closing_thought": data.get(
             "closing_thought", "What did you notice in what you heard?"
         ),

@@ -18,29 +18,38 @@
     --warn: #f0c040;
     --danger: #e0556a;
     --magenta: #c084fc;
-    --radius: 10px;
+    --radius: 12px;
+    --radius-sm: 8px;
+    --radius-lg: 18px;
+    --radius-xl: 22px;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.25);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.3);
     --safe-bottom: env(safe-area-inset-bottom, 8px);
+    --transition-fast: 0.15s ease;
+    --transition: 0.2s ease;
   }
   * { box-sizing:border-box; margin:0; padding:0 }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     background: var(--bg); color: var(--text);
     height: 100dvh; display: flex; flex-direction: column;
-    max-width: 520px; margin: 0 auto;
+    max-width: 900px; margin: 0 auto;
     overflow: hidden;
     -webkit-tap-highlight-color: transparent;
   }
 
   /* ── Header ── */
   header {
-    padding: 12px 16px 8px;
+    padding: 14px 16px 10px;
     text-align: center;
-    border-bottom: 1px solid var(--surface2);
+    border-bottom: 1px solid rgba(255,255,255,0.04);
     flex-shrink: 0;
+    background: linear-gradient(180deg, rgba(74,166,255,0.04) 0%, transparent 100%);
   }
-  header h1 { font-size: 1.1rem; font-weight: 700; letter-spacing: -0.3px }
+  header h1 { font-size: 1.15rem; font-weight: 700; letter-spacing: -0.3px; color: var(--text) }
   header h1 span { color: var(--accent) }
-  header .sub { font-size: 0.7rem; color: var(--dim); margin-top: 2px }
+  header .sub { font-size: 0.65rem; color: var(--dim); margin-top: 3px; letter-spacing: 0.4px; text-transform: uppercase; opacity: 0.7 }
 
   /* ── Identity card ── */
   #identity-card {
@@ -104,125 +113,448 @@
   .modal .btn-row { display: flex; gap: 8px; margin-top: 14px; justify-content: flex-end }
 
   /* ── Views ── */
-  .view { display: none; flex: 1; flex-direction: column; overflow: hidden; height: 100% }
+  .view { display: none; flex: 1; flex-direction: column; overflow: hidden }
   .view.active { display: flex }
 
   /* ── Chat ── */
-  #chat-messages {
-    flex: 1; overflow-y: auto; padding: 12px;
-    display: flex; flex-direction: column; gap: 8px;
+  .chat-layout {
+    display: flex; flex: 1; overflow: hidden;
+    flex-direction: row;
   }
-  .msg { max-width: 88%; padding: 10px 14px; border-radius: var(--radius); line-height: 1.45; font-size: 0.92rem; word-break: break-word }
-  .msg.user { background: var(--accent2); color: #fff; align-self: flex-end; border-bottom-right-radius: 3px }
-  .msg.assistant { background: var(--surface); color: var(--text); align-self: flex-start; border-bottom-left-radius: 3px }
-  .msg.assistant.streaming { border-left: 2px solid var(--accent) }
-  .msg .label { font-size: 0.65rem; opacity: 0.6; margin-bottom: 3px; text-transform: uppercase; letter-spacing: 0.5px }
+  /* ── Chat Sidebar ── */
+  .chat-sidebar {
+    width: 220px; flex-shrink: 0;
+    background: var(--surface);
+    border-right: 1px solid rgba(255,255,255,0.04);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .chat-sidebar-header {
+    padding: 12px 12px 10px; border-bottom: 1px solid rgba(255,255,255,0.04);
+    flex-shrink: 0;
+  }
+  .chat-sidebar-header .new-chat-btn {
+    width: 100%; background: var(--surface2); color: var(--text);
+    border: 1px solid rgba(255,255,255,0.06); padding: 9px 10px;
+    border-radius: var(--radius-sm); font-size: 0.82rem; cursor: pointer;
+    text-align: center; transition: all var(--transition);
+    font-weight: 500;
+  }
+  .chat-sidebar-header .new-chat-btn:hover {
+    background: var(--accent2); color: #fff;
+    border-color: var(--accent2);
+    box-shadow: var(--shadow-sm);
+    transform: translateY(-1px);
+  }
+  .chat-sidebar-header .new-chat-btn:active {
+    transform: translateY(0);
+    opacity: 0.85;
+  }
+  .chat-sidebar-list {
+    flex: 1; overflow-y: auto; padding: 6px 8px;
+  }
+  .chat-sidebar-item {
+    padding: 10px 12px; border-radius: var(--radius-sm); cursor: pointer;
+    font-size: 0.8rem; margin-bottom: 3px;
+    transition: all var(--transition-fast); line-height: 1.35;
+    word-break: break-word; overflow: hidden;
+    border: 1px solid transparent;
+  }
+  .chat-sidebar-item:hover {
+    background: var(--surface2);
+    border-color: rgba(255,255,255,0.04);
+  }
+  .chat-sidebar-item.active {
+    background: linear-gradient(135deg, var(--accent2) 0%, #3a8be0 100%);
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(77,166,255,0.25);
+    border-color: transparent;
+  }
+  .chat-sidebar-item .si-title { font-weight: 600 }
+  .chat-sidebar-item .si-meta { font-size: 0.65rem; opacity: 0.6; margin-top: 3px }
+  .chat-sidebar-item.active .si-meta { opacity: 0.75 }
+  .chat-main {
+    flex: 1; display: flex; flex-direction: column; overflow: hidden;
+    min-width: 0;
+  }
+  /* ── Chat Messages ── */
+  #chat-messages {
+    flex: 1; overflow-y: auto; padding: 16px 14px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .msg {
+    max-width: 88%; padding: 12px 16px;
+    border-radius: var(--radius);
+    line-height: 1.5; font-size: 0.92rem;
+    word-break: break-word;
+    animation: msgIn 0.2s ease both;
+  }
+  @keyframes msgIn {
+    from { opacity: 0; transform: translateY(6px) scale(0.98) }
+    to   { opacity: 1; transform: translateY(0) scale(1) }
+  }
+  .msg.user {
+    background: linear-gradient(135deg, var(--accent2) 0%, #3a8be0 100%);
+    color: #fff; align-self: flex-end;
+    border-bottom-right-radius: 4px;
+    box-shadow: 0 2px 8px rgba(77,166,255,0.2);
+  }
+  .msg.assistant {
+    background: var(--surface);
+    color: var(--text); align-self: flex-start;
+    border-bottom-left-radius: 4px;
+    box-shadow: var(--shadow-sm);
+    border: 1px solid rgba(255,255,255,0.04);
+  }
+  .msg.assistant.streaming {
+    border-left: 2px solid var(--accent);
+    box-shadow: 0 2px 12px rgba(59,204,142,0.1);
+  }
+  .msg .label { font-size: 0.65rem; opacity: 0.6; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px }
+  .msg.assistant code {
+    background: var(--surface2); padding: 1px 5px; border-radius: 4px;
+    font-size: 0.85em; font-family: 'SF Mono', 'Fira Code', monospace;
+  }
+  .msg.assistant pre {
+    background: var(--surface2); padding: 10px; border-radius: 6px;
+    overflow-x: auto; margin: 6px 0;
+  }
+  .msg.assistant pre code { background: none; padding: 0 }
+  .msg.assistant ul { margin: 4px 0; padding-left: 18px }
+  .msg.assistant li { margin: 2px 0 }
+  .msg.assistant strong { color: var(--accent) }
+  /* ── Chat Input ── */
   #chat-input-wrap {
-    display: flex; gap: 8px; padding: 8px 12px calc(8px + var(--safe-bottom));
-    border-top: 1px solid var(--surface2); flex-shrink: 0; background: var(--bg);
+    display: flex; gap: 8px; padding: 10px 14px calc(10px + var(--safe-bottom));
+    border-top: 1px solid rgba(255,255,255,0.04);
+    flex-shrink: 0; background: var(--bg);
   }
   #chat-input {
-    flex: 1; background: var(--surface); border: 1px solid var(--surface2);
-    color: var(--text); padding: 10px 14px; border-radius: 22px; font-size: 0.9rem;
-    outline: none; transition: border-color 0.2s;
+    flex: 1; background: var(--surface); border: 1px solid rgba(255,255,255,0.06);
+    color: var(--text); padding: 11px 16px; border-radius: var(--radius-xl); font-size: 0.9rem;
+    outline: none; transition: all var(--transition);
+    box-shadow: inset 0 1px 3px rgba(0,0,0,0.2);
   }
-  #chat-input:focus { border-color: var(--accent2) }
+  #chat-input::placeholder { color: var(--dim); opacity: 0.6 }
+  #chat-input:focus {
+    border-color: var(--accent2);
+    box-shadow: inset 0 1px 3px rgba(0,0,0,0.2), 0 0 0 3px rgba(77,166,255,0.1);
+  }
+
+  /* ── Buttons ── */
   .btn {
-    background: var(--accent2); color: #fff; border: none; border-radius: 22px;
-    padding: 10px 18px; font-size: 0.85rem; font-weight: 600; cursor: pointer;
-    white-space: nowrap; transition: opacity 0.2s;
+    background: var(--accent2); color: #fff; border: none; border-radius: var(--radius-xl);
+    padding: 11px 20px; font-size: 0.85rem; font-weight: 600; cursor: pointer;
+    white-space: nowrap;
+    transition: all var(--transition);
+    box-shadow: var(--shadow-sm);
+    position: relative;
+    overflow: hidden;
   }
-  .btn:active { opacity: 0.7 }
-  .btn.small { padding: 6px 14px; font-size: 0.78rem; border-radius: 16px }
-  .btn.ghost { background: transparent; border: 1px solid var(--surface2); color: var(--dim) }
-  .btn.accent { background: var(--accent); color: #000 }
+  .btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(77,166,255,0.3);
+  }
+  .btn:active {
+    transform: translateY(0);
+    box-shadow: var(--shadow-sm);
+    opacity: 0.85;
+  }
+  .btn.small {
+    padding: 7px 16px; font-size: 0.78rem; border-radius: 16px;
+  }
+  .btn.ghost {
+    background: transparent; border: 1px solid rgba(255,255,255,0.08); color: var(--dim);
+    box-shadow: none;
+  }
+  .btn.ghost:hover {
+    border-color: var(--dim); color: var(--text);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
+  }
+  .btn.accent {
+    background: var(--accent); color: #000;
+  }
+  .btn.accent:hover {
+    box-shadow: 0 4px 12px rgba(59,204,142,0.3);
+  }
 
   /* ── Immerse ── */
-  #immerse-view { padding: 12px; gap: 12px; overflow-y: auto }
+  #immerse-view { overflow: hidden; display: none; flex-direction: row }
+  #immerse-view.view.active { display: flex }
+  .immerse-sidebar {
+    width: 220px; flex-shrink: 0;
+    background: var(--surface);
+    border-right: 1px solid rgba(255,255,255,0.04);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .immerse-sidebar-header {
+    padding: 12px 12px 10px; border-bottom: 1px solid rgba(255,255,255,0.04);
+    flex-shrink: 0;
+  }
+  .immerse-sidebar-header h3 { font-size: 0.82rem; color: var(--dim); letter-spacing: 0.3px }
+  .immerse-sidebar-list {
+    flex: 1; overflow-y: auto; padding: 6px 8px;
+  }
+  .immerse-main {
+    flex: 1; display: flex; flex-direction: column; overflow-y: auto; padding: 14px; gap: 14px;
+    min-width: 0;
+  }
   .immerse-controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center }
   .immerse-controls select {
-    background: var(--surface); color: var(--text); border: 1px solid var(--surface2);
-    padding: 8px 12px; border-radius: var(--radius); font-size: 0.85rem; outline: none;
+    background: var(--surface); color: var(--text); border: 1px solid rgba(255,255,255,0.06);
+    padding: 8px 12px; border-radius: var(--radius-sm); font-size: 0.85rem; outline: none;
+    transition: border-color var(--transition);
+    cursor: pointer;
   }
+  .immerse-controls select:focus {
+    border-color: var(--accent2);
+    box-shadow: 0 0 0 3px rgba(77,166,255,0.1);
+  }
+  /* ── Immersive Player ── */
   .pass-indicator {
-    display: flex; gap: 6px; justify-content: center; margin: 8px 0;
+    display: flex; gap: 8px; justify-content: center; margin: 6px 0 14px;
   }
   .pass-dot {
     width: 12px; height: 12px; border-radius: 50%; background: var(--surface2);
-    transition: background 0.3s;
+    transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    position: relative;
   }
-  .pass-dot.active { background: var(--accent) }
-  .pass-dot.done { background: var(--accent2) }
+  .pass-dot.active {
+    background: var(--accent);
+    transform: scale(1.3);
+    box-shadow: 0 0 8px rgba(59,204,142,0.4);
+  }
+  .pass-dot.done {
+    background: var(--accent2);
+  }
   .pass-panel {
-    background: var(--surface); border-radius: var(--radius); padding: 16px;
-    text-align: center; border: 1px solid var(--surface2);
+    background: var(--surface); border-radius: var(--radius); padding: 20px;
+    text-align: center; border: 1px solid rgba(255,255,255,0.04);
+    box-shadow: var(--shadow-sm);
   }
-  .pass-panel h3 { font-size: 1rem; margin-bottom: 6px }
-  .pass-panel p { font-size: 0.8rem; color: var(--dim); line-height: 1.5 }
+  .pass-panel h3 { font-size: 1rem; margin-bottom: 8px }
+  .pass-panel p { font-size: 0.82rem; color: var(--dim); line-height: 1.6 }
   .passage-text {
-    background: var(--surface); border-radius: var(--radius); padding: 16px;
-    font-size: 0.95rem; line-height: 1.7; display: none; border: 1px solid var(--surface2);
-    white-space: pre-wrap;
+    background: var(--surface); border-radius: var(--radius); padding: 18px;
+    font-size: 0.95rem; line-height: 1.7; display: none; border: 1px solid rgba(255,255,255,0.04);
+    white-space: pre-wrap; box-shadow: var(--shadow-sm);
   }
-  .passage-text.visible { display: block }
+  .passage-text.visible {
+    display: block;
+    animation: msgIn 0.3s ease both;
+  }
   .key-words {
-    display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px;
+    display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px;
+    justify-content: center;
   }
   .key-word {
-    background: var(--surface); color: var(--accent); padding: 4px 12px;
+    background: rgba(59,204,142,0.1); color: var(--accent); padding: 5px 14px;
     border-radius: 14px; font-size: 0.82rem; font-weight: 600;
+    border: 1px solid rgba(59,204,142,0.15);
+    transition: all var(--transition-fast);
   }
-  .closing-thought { font-style: italic; color: var(--dim); text-align: center; margin-top: 8px; font-size: 0.88rem }
-  audio { width: 100%; margin: 8px 0; border-radius: var(--radius) }
-  .immers-pass-btns { display: flex; gap: 8px; justify-content: center }
+  .key-word:hover {
+    background: rgba(59,204,142,0.18);
+    transform: translateY(-1px);
+  }
+  .closing-thought {
+    font-style: italic; color: var(--dim); text-align: center;
+    padding: 12px 0 4px; font-size: 0.88rem; line-height: 1.6;
+    animation: msgIn 0.35s ease both;
+  }
+
+  /* ── Audio bar + action button ── */
+  .audio-bar {
+    display: flex; align-items: center; gap: 12px;
+    background: var(--surface); border-radius: 50px;
+    padding: 8px 14px 8px 10px; margin: 14px 0;
+    border: 1px solid rgba(255,255,255,0.04);
+  }
+  .audio-bar .play-btn {
+    width: 36px; height: 36px; border-radius: 50%; border: none;
+    background: var(--accent); color: #000; font-size: 0.9rem;
+    cursor: pointer; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    transition: all var(--transition-fast);
+  }
+  .audio-bar .play-btn:hover { transform: scale(1.08); box-shadow: 0 0 12px rgba(59,204,142,0.3) }
+  .audio-bar .play-btn.playing { background: var(--accent2) }
+  .audio-bar .audio-track {
+    flex: 1; height: 4px; background: var(--surface2); border-radius: 2px;
+    position: relative; overflow: hidden;
+  }
+  .audio-bar .audio-track .fill {
+    height: 100%; background: var(--accent); border-radius: 2px;
+    transition: width 0.3s linear;
+  }
+  .audio-bar .time { font-size: 0.7rem; color: var(--dim); min-width: 32px; text-align: right }
+  .action-btn {
+    display: block; width: 100%; padding: 12px; border: none; border-radius: 12px;
+    font-size: 0.88rem; font-weight: 600; cursor: pointer;
+    transition: all var(--transition); text-align: center;
+  }
+  .action-btn.primary {
+    background: var(--accent); color: #000;
+  }
+  .action-btn.primary:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(59,204,142,0.25) }
+  .action-btn.secondary {
+    background: var(--surface2); color: var(--text);
+  }
+  .action-btn.secondary:hover { background: #203e60 }
+  .immerse-divider {
+    height: 1px; background: rgba(255,255,255,0.04); margin: 16px 0;
+  }
+
+  /* ── Immersion History Items ── */
+  .immerse-history-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 12px; border-radius: var(--radius-sm);
+    cursor: pointer; margin-bottom: 3px;
+    transition: all var(--transition-fast);
+    border: 1px solid transparent;
+  }
+  .immerse-history-item:hover {
+    background: var(--surface2);
+    border-color: rgba(255,255,255,0.04);
+  }
+  .immerse-history-item .hi-title {
+    font-size: 0.8rem; font-weight: 600; line-height: 1.3;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .immerse-history-item .hi-meta {
+    font-size: 0.65rem; opacity: 0.6; margin-top: 2px;
+  }
+  .immerse-history-item .hi-play {
+    flex-shrink: 0;
+    width: 28px; height: 28px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--surface2); border: none; border-radius: 50%;
+    color: var(--accent2); font-size: 0.75rem;
+    cursor: pointer; transition: all var(--transition-fast);
+  }
+  .immerse-history-item .hi-play:hover {
+    background: var(--accent2); color: #fff;
+    transform: scale(1.1);
+  }
 
   /* ── Stats ── */
-  #stats-view { padding: 12px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px }
+  #stats-view { padding: 14px; overflow-y: auto; flex-direction: column; gap: 14px }
   .stat-card {
-    background: var(--surface); border-radius: var(--radius); padding: 14px;
-    border: 1px solid var(--surface2);
+    background: var(--surface); border-radius: var(--radius); padding: 18px;
+    border: 1px solid rgba(255,255,255,0.04);
+    box-shadow: var(--shadow-sm);
+    transition: all var(--transition);
   }
-  .stat-card h3 { font-size: 0.85rem; color: var(--accent); margin-bottom: 8px }
+  .stat-card:hover {
+    border-color: rgba(255,255,255,0.08);
+    box-shadow: var(--shadow-md);
+  }
+  .stat-card h3 { font-size: 0.85rem; color: var(--accent); margin-bottom: 10px; letter-spacing: 0.3px }
   .stat-row { display: flex; gap: 8px; flex-wrap: wrap }
   .stat-chip {
-    background: var(--surface2); padding: 6px 14px; border-radius: 16px;
+    background: var(--surface2); padding: 7px 16px; border-radius: 16px;
     font-size: 0.8rem;
+    transition: background var(--transition-fast);
+  }
+  .stat-chip:hover {
+    background: #203e60;
   }
   .stat-chip .num { font-weight: 700; color: var(--accent) }
+
+  /* ── Stats v2 ── */
+  .stat-big-row { display: flex; gap: 12px; margin-bottom: 4px }
+  .stat-big {
+    flex: 1; text-align: center; padding: 12px 6px;
+    background: var(--surface2); border-radius: 10px;
+  }
+  .stat-big .num { font-size: 1.5rem; font-weight: 800; color: var(--accent); display: block }
+  .stat-big .label { font-size: 0.65rem; color: var(--dim); margin-top: 2px }
+  .stat-big .num.fire { color: #f0a030 }
+  .stat-progress {
+    height: 6px; background: var(--surface2); border-radius: 3px; margin: 8px 0; overflow: hidden;
+    display: flex; gap: 2px;
+  }
+  .stat-progress .seg {
+    height: 100%; border-radius: 3px; transition: width 0.6s ease;
+  }
+  .stat-progress .seg.new { background: #6a8aaa }
+  .stat-progress .seg.learning { background: var(--accent2) }
+  .stat-progress .seg.learned { background: var(--accent) }
+  .stat-progress .seg.due { background: var(--danger) }
+  .stat-legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 0.72rem; color: var(--dim); margin-top: 6px }
+  .stat-legend span { display: flex; align-items: center; gap: 4px }
+  .stat-legend .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block }
+  .stat-dist-row { display: flex; gap: 6px; margin-top: 8px }
+  .stat-dist-item {
+    flex: 1; text-align: center; padding: 8px 4px;
+    border-radius: 8px; font-size: 0.72rem; background: var(--surface2);
+  }
+  .stat-dist-item .count { font-size: 1rem; font-weight: 700; display: block }
+  .stat-dist-item.easy .count { color: var(--accent) }
+  .stat-dist-item.medium .count { color: var(--accent2) }
+  .stat-dist-item.hard .count { color: var(--danger) }
+  .stat-session-item {
+    display: flex; align-items: center; gap: 10px; padding: 8px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+  .stat-session-item:last-child { border-bottom: none }
+  .stat-session-item .ss-date { font-size: 0.72rem; color: var(--dim); min-width: 70px }
+  .stat-session-item .ss-bar {
+    flex: 1; height: 4px; background: var(--surface2); border-radius: 2px; overflow: hidden;
+  }
+  .stat-session-item .ss-bar .fill { height: 100%; background: var(--accent2); border-radius: 2px; transition: width 0.6s }
+  .stat-session-item .ss-count { font-size: 0.72rem; color: var(--dim); min-width: 30px; text-align: right }
+
   .error-bar {
-    display: flex; align-items: center; gap: 8px; margin: 4px 0; font-size: 0.8rem;
+    display: flex; align-items: center; gap: 10px; margin: 6px 0; font-size: 0.8rem;
   }
   .error-bar .fill {
-    height: 8px; background: var(--accent2); border-radius: 4px; transition: width 0.4s;
+    height: 8px; background: linear-gradient(90deg, var(--accent2), #6ab4ff);
+    border-radius: 4px; transition: width 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
 
   /* ── Tabs ── */
   nav {
-    display: flex; border-top: 1px solid var(--surface2); flex-shrink: 0;
+    display: flex; border-top: 1px solid rgba(255,255,255,0.04); flex-shrink: 0;
     padding-bottom: var(--safe-bottom); background: var(--bg);
   }
   nav button {
     flex: 1; background: none; border: none; color: var(--dim);
     padding: 10px 6px; font-size: 0.72rem; cursor: pointer;
     display: flex; flex-direction: column; align-items: center; gap: 3px;
-    transition: color 0.2s;
+    transition: all var(--transition);
+    position: relative;
   }
-  nav button .icon { font-size: 1.2rem }
+  nav button .icon { font-size: 1.2rem; transition: transform var(--transition-fast) }
+  nav button:hover .icon { transform: scale(1.15) }
   nav button.active { color: var(--accent) }
+  nav button.active::after {
+    content: '';
+    position: absolute;
+    top: -1px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 24px;
+    height: 2px;
+    background: var(--accent);
+    border-radius: 0 0 2px 2px;
+  }
 
   /* ── Spinner ── */
   .spinner {
-    display: inline-block; width: 16px; height: 16px; border: 2px solid var(--surface2);
-    border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite;
-    margin-right: 6px; vertical-align: middle;
+    display: inline-block; width: 18px; height: 18px;
+    border: 2px solid rgba(255,255,255,0.06);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) infinite;
+    margin-right: 8px; vertical-align: middle;
   }
   @keyframes spin { to { transform: rotate(360deg) } }
 
   /* ── Empty state ── */
-  .empty { text-align: center; color: var(--dim); padding: 40px 20px; font-size: 0.88rem; line-height: 1.6 }
-  .empty .icon { font-size: 2.5rem; display: block; margin-bottom: 12px }
+  .empty { text-align: center; color: var(--dim); padding: 48px 24px; font-size: 0.88rem; line-height: 1.6 }
+  .empty .icon { font-size: 2.8rem; display: block; margin-bottom: 14px; opacity: 0.6 }
 
-  /* ── Scrollbar ── */
   ::-webkit-scrollbar { width: 4px }
   ::-webkit-scrollbar-thumb { background: var(--surface2); border-radius: 2px }
 </style>
@@ -289,48 +621,70 @@
 
 <!-- Chat View -->
 <div id="chat-view" class="view active">
-  <div id="chat-messages"></div>
-  <div id="chat-input-wrap">
-    <input id="chat-input" type="text" placeholder="Type a message..." autocomplete="off">
-    <button class="btn" onclick="sendMessage()">Send</button>
+  <div class="chat-layout">
+    <div class="chat-sidebar">
+      <div class="chat-sidebar-header">
+        <div class="new-chat-btn" onclick="newChatSession()">+ New Chat</div>
+      </div>
+      <div class="chat-sidebar-list" id="session-list"></div>
+    </div>
+    <div class="chat-main">
+      <div id="chat-messages"></div>
+      <div id="chat-input-wrap">
+        <input id="chat-input" type="text" placeholder="Type a message..." autocomplete="off">
+        <button class="btn" onclick="sendMessage()">Send</button>
+      </div>
+    </div>
   </div>
 </div>
 
 <!-- Immerse View -->
 <div id="immerse-view" class="view">
-  <div class="immerse-controls">
-    <select id="immerse-difficulty">
-      <option value="easy">A2 — Easy</option>
-      <option value="medium" selected>B1 — Medium</option>
-      <option value="hard">B2 — Hard</option>
-    </select>
-    <select id="immerse-type">
-      <option value="">🎲 Random</option>
-      <option value="daily_scene">🌅 Daily Scene</option>
-      <option value="mini_story">📖 Mini Story</option>
-      <option value="place_description">🏞️ Place</option>
-      <option value="dialogue">💬 Dialogue</option>
-      <option value="observation">🔍 Observation</option>
-    </select>
-    <input id="immerse-topic" type="text" placeholder="Topic (optional)" style="flex:1;min-width:100px;background:var(--surface);color:var(--text);border:1px solid var(--surface2);padding:8px 12px;border-radius:var(--radius);font-size:0.85rem;outline:none">
+  <div class="immerse-sidebar">
+    <div class="immerse-sidebar-header">
+      <h3>📋 Practice History</h3>
+    </div>
+    <div class="immerse-sidebar-list" id="immerse-history-list"></div>
   </div>
-  <button class="btn accent" onclick="generateImmersion()" style="align-self:center">✨ Generate Passage</button>
+  <div class="immerse-main">
+    <div class="immerse-controls">
+      <select id="immerse-difficulty">
+        <option value="easy">A2 — Easy</option>
+        <option value="medium" selected>B1 — Medium</option>
+        <option value="hard">B2 — Hard</option>
+      </select>
+      <select id="immerse-type">
+        <option value="">🎲 Random</option>
+        <option value="daily_scene">🌅 Daily Scene</option>
+        <option value="mini_story">📖 Mini Story</option>
+        <option value="place_description">🏞️ Place</option>
+        <option value="dialogue">💬 Dialogue</option>
+        <option value="observation">🔍 Observation</option>
+      </select>
+      <input id="immerse-topic" type="text" placeholder="Topic (optional)" style="flex:1;min-width:100px;background:var(--surface);color:var(--text);border:1px solid var(--surface2);padding:8px 12px;border-radius:var(--radius);font-size:0.85rem;outline:none">
+    </div>
+    <button class="btn accent" onclick="generateImmersion()" style="align-self:center">✨ Generate Passage</button>
 
-  <div id="immerse-player" style="display:none">
-    <div class="pass-indicator">
-      <div class="pass-dot" id="pass-dot-1"></div>
-      <div class="pass-dot" id="pass-dot-2"></div>
-      <div class="pass-dot" id="pass-dot-3"></div>
+    <div id="immerse-player" style="display:none">
+      <div class="pass-indicator">
+        <div class="pass-dot" id="pass-dot-1"></div>
+        <div class="pass-dot" id="pass-dot-2"></div>
+        <div class="pass-dot" id="pass-dot-3"></div>
+      </div>
+      <div class="pass-panel" id="pass-panel"></div>
+      <div id="passage-text" class="passage-text"></div>
+      <div class="audio-bar" id="audio-bar" style="display:none">
+        <button class="play-btn" id="play-btn" onclick="togglePlay()">▶</button>
+        <div class="audio-track"><div class="fill" id="audio-track-fill"></div></div>
+        <span class="time" id="audio-time">0:00</span>
+      </div>
+      <audio id="immerse-audio" preload="auto" style="display:none"></audio>
+      <button class="action-btn primary" onclick="nextPass()" id="btn-next" style="display:none">🎧 Start Listening</button>
+      <button class="action-btn secondary" onclick="prevPass()" id="btn-prev" style="display:none">◀ Back</button>
+      <div class="immerse-divider" id="immerse-divider" style="display:none"></div>
+      <div id="key-words-wrap" class="key-words" style="display:none"></div>
+      <div id="closing-thought" class="closing-thought" style="display:none"></div>
     </div>
-    <div class="pass-panel" id="pass-panel"></div>
-    <div id="passage-text" class="passage-text"></div>
-    <audio id="immerse-audio" controls style="display:none"></audio>
-    <div class="immers-pass-btns">
-      <button class="btn small" onclick="prevPass()" id="btn-prev" style="display:none">◀ Back</button>
-      <button class="btn small accent" onclick="nextPass()" id="btn-next">Next ▶</button>
-    </div>
-    <div id="key-words-wrap" class="key-words" style="display:none"></div>
-    <div id="closing-thought" class="closing-thought" style="display:none"></div>
   </div>
 </div>
 
@@ -365,6 +719,7 @@ function switchTab(tab) {
   document.getElementById(tab + '-view').classList.add('active');
   event.target.closest('button').classList.add('active');
   if (tab === 'stats') loadStats();
+  if (tab === 'immerse') loadImmerseHistory();
 }
 
 // ── Chat ──
@@ -377,6 +732,14 @@ async function sendMessage() {
   const text = chatInput.value.trim();
   if (!text) return;
   chatInput.value = '';
+
+  // ── Local slash commands ──
+  if (text.startsWith('/')) {
+    appendMsg('user', text);
+    handleCommand(text);
+    return;
+  }
+
   appendMsg('user', text);
   const streamMsg = appendMsg('assistant', '', true);
 
@@ -407,6 +770,9 @@ async function sendMessage() {
             streamMsg.querySelector('.content').textContent = 'Error: ' + data.error;
           } else if (data.done) {
             streamMsg.classList.remove('streaming');
+            // Re-render accumulated markdown
+            const contentDiv = streamMsg.querySelector('.content');
+            contentDiv.innerHTML = renderMarkdown(contentDiv.textContent);
           }
         } catch(e) {}
       }
@@ -421,7 +787,11 @@ function appendMsg(role, content, streaming = false) {
   const div = document.createElement('div');
   div.className = 'msg ' + role + (streaming ? ' streaming' : '');
   const label = role === 'assistant' ? 'Emma' : 'You';
-  div.innerHTML = `<div class="label">${label}</div><div class="content">${escapeHtml(content)}</div>`;
+  if (role === 'assistant' && !streaming) {
+    div.innerHTML = `<div class="label">${label}</div><div class="content">${renderMarkdown(content)}</div>`;
+  } else {
+    div.innerHTML = `<div class="label">${label}</div><div class="content">${escapeHtml(content)}</div>`;
+  }
   chatMessages.appendChild(div);
   chatMessages.scrollTop = chatMessages.scrollHeight;
   return div;
@@ -429,6 +799,72 @@ function appendMsg(role, content, streaming = false) {
 
 function escapeHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Slash commands ──
+function handleCommand(cmd) {
+  const parts = cmd.slice(1).split(/\s+/);
+  const name = parts[0].toLowerCase();
+  const args = parts.slice(1);
+
+  if (name === 'help' || name === '?') {
+    appendMsg('assistant',
+`**\u{1F30A} English Tutor Commands**\n\n**Chat commands:**\n• \`/help\` or \`/?\` — Show this help\n• \`/topic [\u4e3b\u9898]\` — Switch to a specific topic\n• \`/level [easy|medium|hard]\` — Adjust difficulty\n• \`/vocab\` — Learn new vocabulary\n• \`/clear\` — Clear conversation history\n• \`/stats\` — Show your learning stats\n\n**Tips:**\n• Just chat naturally — Emma will correct you gently\n• Try the **Immerse** tab for listening practice\n• Try the **Stats** tab to track your progress`);
+    return;
+  }
+
+  if (name === 'topic') {
+    const topic = args.join(' ') || 'something interesting';
+    appendMsg('assistant', `Great! Let's talk about **${topic}**. Tell me what comes to mind! \u{1F60A}`);
+    return;
+  }
+
+  if (name === 'level' || name === 'difficulty') {
+    const level = args[0] || 'medium';
+    const labels = {easy: '\u{1F7E2} Easy (A2)', medium: '\u{1F7E1} Medium (B1)', hard: '\u{1F534} Hard (B2)'};
+    const label = labels[level] || '\u{1F7E1} Medium (B1)';
+    appendMsg('assistant', `Okay! Switching to **${label}** level. I'll adjust my vocabulary and sentences.`);
+    return;
+  }
+
+  if (name === 'vocab') {
+    appendMsg('assistant', `**\u{1F4DA} Word of the Day**\n\nHere are some useful words to learn:\n\n• **benefit** (n.) — an advantage or profit\n  _\"Regular practice has many **benefits**.\"_\n\n• **effective** (adj.) — producing the desired result\n  _\"What's the most **effective** way to learn?\"_\n\n• **gradually** (adv.) — slowly over time\n  _\"Your English will **gradually** improve.\"_\n\nTry using one of them in a sentence!`);
+    return;
+  }
+
+  if (name === 'clear') {
+    chatMessages.innerHTML = '';
+    appendMsg('assistant', `\u{1F9F9} Conversation cleared! Let's start fresh. How are you today?`);
+    return;
+  }
+
+  if (name === 'stats') {
+    appendMsg('assistant', `\u{1F4CA} You can check your detailed stats in the **Stats** tab! Tap the \u{1F4CA} button at the bottom.`);
+    return;
+  }
+
+  // Unknown command
+  appendMsg('assistant', `Unknown command \`${cmd}\`. Try **/help** to see available commands.`);
+}
+
+// ── Markdown renderer (lightweight) ──
+function renderMarkdown(text) {
+  // Escape HTML first
+  let html = escapeHtml(text);
+  // Code block: \`\`\`...\`\`\` (multi-line)
+  html = html.replace(/\`\`\`(\w*)\n?([\s\S]*?)\`\`\`/g, '<pre><code>$2</code></pre>');
+  // Inline code: \`code\`
+  html = html.replace(/\`([^\`]+)\`/g, '<code>$1</code>');
+  // Bold: **text**
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  // Italic: *text* (but not inside **)
+  html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+  // Unordered list: - item
+  html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+  html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
+  // Line breaks
+  html = html.replace(/\n/g, '<br>');
+  return html;
 }
 
 // ── Immersion ──
@@ -452,16 +888,6 @@ async function generateImmersion() {
     });
     immersionData = await resp.json();
 
-    // Generate audio
-    showLoading('Generating audio...');
-    const audioResp = await fetch('/api/speak', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({text: immersionData.passage}),
-    });
-    const audioData = await audioResp.json();
-    immersionData.audio_url = audioData.url;
-
     // Show player
     player.style.display = 'block';
     currentPass = 1;
@@ -469,6 +895,9 @@ async function generateImmersion() {
 
     hideLoading();
     player.scrollIntoView({behavior: 'smooth'});
+
+    // Refresh history
+    loadImmerseHistory();
   } catch(e) {
     hideLoading();
     alert('Failed to generate. Check your connection and try again.');
@@ -485,43 +914,68 @@ function updatePassUI() {
     if (i === currentPass) dot.classList.add('active');
   }
 
-  // Pass panel text
+  // Pass panel — emoji + title + instruction
   const panel = document.getElementById('pass-panel');
-  const panels = {
-    1: `<h3>👂 Pass 1/3 — Sound First</h3><p>Listen only. Don't try to understand every word.<br>Let the rhythm wash over you.<br><br>💡 Relax your shoulders. Unclench your jaw.<br>You're not being tested. You're just listening.</p>`,
-    2: `<h3>👁️ Pass 2/3 — Read Along</h3><p>Now see the text while listening.<br>Connect the written words to the sounds.<br>Notice: did anything sound different than you expected?</p>`,
-    3: `<h3>🧘 Pass 3/3 — Eyes Closed</h3><p>Close your eyes if you can. Just listen.<br>Your brain is building direct pathways.<br>How much more did you understand this time?</p>`,
+  const emojis = {1:'🎧', 2:'👁️', 3:'🧘'};
+  const titles = {
+    1: 'Pass 1/3 — Sound First',
+    2: 'Pass 2/3 — Read Along',
+    3: 'Pass 3/3 — Eyes Closed',
   };
-  panel.innerHTML = panels[currentPass] || '';
+  const descs = {
+    1: 'Listen only. Let the rhythm wash over you. Relax—you are not being tested.',
+    2: 'Read the text while listening. Connect the written words to the sounds you heard.',
+    3: 'Close your eyes. Just listen. Your brain is building direct sound→meaning pathways.',
+  };
+  panel.innerHTML = '<span class="emoji">' + (emojis[currentPass] || '') + '</span>' +
+    '<h3>' + (titles[currentPass] || '') + '</h3>' +
+    '<p>' + (descs[currentPass] || '') + '</p>';
 
-  // Text visibility
+  // Passage text — visible only on pass 2
   const passageDiv = document.getElementById('passage-text');
   passageDiv.textContent = immersionData?.passage || '';
   passageDiv.classList.toggle('visible', currentPass === 2);
 
-  // Audio
+  // Audio bar + hidden native audio
+  const audioBar = document.getElementById('audio-bar');
   const audio = document.getElementById('immerse-audio');
-  if (immersionData?.audio_url) {
-    audio.src = immersionData.audio_url;
-    audio.style.display = 'block';
+  const divider = document.getElementById('immerse-divider');
+  if (immersionData?.audio_url && currentPass >= 1) {
+    if (!audio.src || !audio.src.includes(immersionData.audio_url)) {
+      audio.src = immersionData.audio_url;
+    }
+    audioBar.style.display = 'flex';
   }
 
-  // Buttons
-  document.getElementById('btn-prev').style.display = currentPass > 1 ? '' : 'none';
+  // Main action button
   const btnNext = document.getElementById('btn-next');
+  const btnPrev = document.getElementById('btn-prev');
   if (currentPass >= 3) {
-    btnNext.textContent = '✨ Reveal Key Words';
-    btnNext.className = 'btn small accent';
+    btnNext.textContent = '✨ Show What I Learned';
+    btnNext.className = 'action-btn primary';
+    btnNext.style.display = 'block';
+    btnPrev.style.display = currentPass > 1 ? 'block' : 'none';
+  } else if (currentPass === 1) {
+    btnNext.textContent = '👁️ Read Along →';
+    btnNext.className = 'action-btn primary';
+    btnNext.style.display = 'block';
+    btnPrev.style.display = 'none';
+    divider.style.display = 'none';
   } else {
-    btnNext.textContent = 'Next ▶';
-    btnNext.className = 'btn small accent';
+    btnNext.textContent = '🧘 Eyes Closed →';
+    btnNext.className = 'action-btn primary';
+    btnNext.style.display = 'block';
+    btnPrev.style.display = 'block';
   }
 
-  // Key words + closing thought (only after pass 3)
-  const kwWrap = document.getElementById('key-words-wrap');
-  const ct = document.getElementById('closing-thought');
-  kwWrap.style.display = 'none';
-  ct.style.display = 'none';
+  // Hide key words + closing thought until pass 3 done
+  document.getElementById('key-words-wrap').style.display = 'none';
+  document.getElementById('closing-thought').style.display = 'none';
+  // Reset track fill
+  document.getElementById('audio-track-fill').style.width = '0%';
+  document.getElementById('audio-time').textContent = '0:00';
+  document.getElementById('play-btn').textContent = '▶';
+  document.getElementById('play-btn').classList.remove('playing');
 }
 
 function nextPass() {
@@ -529,8 +983,10 @@ function nextPass() {
     currentPass++;
     updatePassUI();
     document.getElementById('immerse-player').scrollIntoView({behavior: 'smooth'});
+    // Auto-play on pass 1 and pass 3
+    if (currentPass !== 2) playAudio();
   } else {
-    // Reveal key words
+    // Reveal key words + closing thought
     const kwWrap = document.getElementById('key-words-wrap');
     kwWrap.innerHTML = '';
     if (immersionData?.key_words) {
@@ -546,10 +1002,11 @@ function nextPass() {
     const ct = document.getElementById('closing-thought');
     ct.textContent = '💭 ' + (immersionData?.closing_thought || '');
     ct.style.display = 'block';
+    document.getElementById('immerse-divider').style.display = 'block';
 
     document.getElementById('btn-next').textContent = '🔄 New Passage';
     document.getElementById('btn-next').onclick = generateImmersion;
-    document.getElementById('btn-prev').style.display = '';
+    document.getElementById('btn-prev').style.display = 'none';
   }
 }
 
@@ -557,6 +1014,118 @@ function prevPass() {
   if (currentPass > 1) {
     currentPass--;
     updatePassUI();
+  }
+}
+
+// ── Audio controls ──
+function togglePlay() {
+  const audio = document.getElementById('immerse-audio');
+  const btn = document.getElementById('play-btn');
+  if (audio.paused) {
+    playAudio();
+  } else {
+    audio.pause();
+    btn.textContent = '▶';
+    btn.classList.remove('playing');
+  }
+}
+
+function playAudio() {
+  const audio = document.getElementById('immerse-audio');
+  const btn = document.getElementById('play-btn');
+  const fill = document.getElementById('audio-track-fill');
+  const timeLabel = document.getElementById('audio-time');
+  if (!audio.src) return;
+  audio.play().catch(() => {});
+  btn.textContent = '⏸';
+  btn.classList.add('playing');
+  // Update progress bar
+  audio.ontimeupdate = () => {
+    if (audio.duration) {
+      const pct = (audio.currentTime / audio.duration * 100).toFixed(0);
+      fill.style.width = pct + '%';
+      const m = Math.floor(audio.currentTime / 60);
+      const s = Math.floor(audio.currentTime % 60);
+      timeLabel.textContent = m + ':' + (s < 10 ? '0' : '') + s;
+    }
+  };
+  audio.onended = () => {
+    btn.textContent = '▶';
+    btn.classList.remove('playing');
+    fill.style.width = '0%';
+    timeLabel.textContent = '0:00';
+  };
+}
+
+// ── Immersion History ──
+async function loadImmerseHistory() {
+  const list = document.getElementById('immerse-history-list');
+  try {
+    const resp = await fetch('/api/immerse/history');
+    const data = await resp.json();
+    if (!data.records || data.records.length === 0) {
+      list.innerHTML = '<div style="color:var(--dim);font-size:0.78rem;text-align:center;padding:8px">No practice sessions yet — generate your first passage!</div>';
+      return;
+    }
+    list.innerHTML = '';
+    for (const r of data.records) {
+      const item = document.createElement('div');
+      item.className = 'immerse-history-item';
+      item.innerHTML = `
+        <div style="flex:1;min-width:0" onclick="replayImmersion('${r.id}')">
+          <div class="hi-title">${escapeHtml(r.title)}</div>
+          <div class="hi-meta">${r.type_label || ''} · ${r.difficulty_label || r.difficulty || ''} · ${(r.created_at || '').slice(0, 10)}</div>
+        </div>
+        ${r.audio_url ? `<button class="hi-play" onclick="event.stopPropagation();playImmersionAudio('${r.audio_url}')">▶</button>`
+                      : `<button class="hi-play" style="background:var(--surface2);color:var(--dim);font-size:0.6rem" onclick="event.stopPropagation();generateImmersionAudio('${r.id}',this)">♺</button>`}
+      `;
+      list.appendChild(item);
+    }
+  } catch(e) {
+    list.innerHTML = '<div style="color:var(--danger);font-size:0.78rem">Failed to load history.</div>';
+  }
+}
+
+async function replayImmersion(recordId) {
+  try {
+    const resp = await fetch('/api/immerse/history/' + recordId);
+    const data = await resp.json();
+    immersionData = data;
+    const player = document.getElementById('immerse-player');
+    player.style.display = 'block';
+    currentPass = 2;
+    updatePassUI();
+    player.scrollIntoView({behavior: 'smooth'});
+  } catch(e) {
+    console.error('Failed to load immersion record:', e);
+  }
+}
+
+function playImmersionAudio(url) {
+  const audio = document.getElementById('immerse-audio');
+  audio.src = url;
+  audio.style.display = 'block';
+  audio.play().catch(() => {});
+  audio.scrollIntoView({behavior: 'smooth'});
+}
+
+async function generateImmersionAudio(recordId, btn) {
+  btn.textContent = '⏳';
+  btn.style.pointerEvents = 'none';
+  try {
+    const resp = await fetch(`/api/immerse/regenerate-audio/${recordId}`, {method: 'POST'});
+    const data = await resp.json();
+    if (data.audio_url) {
+      btn.textContent = '▶';
+      btn.style.background = '';
+      btn.style.color = '';
+      btn.style.fontSize = '';
+      btn.onclick = (e) => { e.stopPropagation(); playImmersionAudio(data.audio_url); };
+      playImmersionAudio(data.audio_url);
+    }
+  } catch(e) {
+    btn.textContent = '✕';
+    console.error('Failed to generate audio:', e);
   }
 }
 
@@ -569,39 +1138,107 @@ async function loadStats() {
     const resp = await fetch('/api/stats');
     const data = await resp.json();
 
+    const srTotal = data.sr_total || 1;
+    const srNewPct = (data.sr_new / srTotal * 100).toFixed(0);
+    const srLearningPct = (data.sr_learning / srTotal * 100).toFixed(0);
+    const srLearnedPct = (data.sr_learned / srTotal * 100).toFixed(0);
+    const srDuePct = (data.sr_due / srTotal * 100).toFixed(0);
+    const maxMsg = Math.max(1, ...(data.recent_sessions || []).map(s => s.message_count));
+
+    const immerseByDifficulty = {};
+    try {
+      const histResp = await fetch('/api/immerse/history');
+      const hist = await histResp.json();
+      for (const r of hist.records || []) {
+        immerseByDifficulty[r.difficulty || 'unknown'] = (immerseByDifficulty[r.difficulty || 'unknown'] || 0) + 1;
+      }
+    } catch(e) {}
+
     const html = `
       <div class="stat-card">
-        <h3>📊 Activity</h3>
-        <div class="stat-row">
-          <div class="stat-chip"><span class="num">${data.sessions}</span> sessions</div>
-          <div class="stat-chip"><span class="num">${data.messages}</span> messages</div>
+        <h3>📊 Overview</h3>
+        <div class="stat-big-row">
+          <div class="stat-big"><span class="num">${data.sessions}</span><span class="label">Sessions</span></div>
+          <div class="stat-big"><span class="num">${data.messages}</span><span class="label">Messages</span></div>
+          <div class="stat-big"><span class="num">${data.immersion_sessions}</span><span class="label">Immerse</span></div>
+          <div class="stat-big"><span class="num fire">${data.streak_days}🔥</span><span class="label">Day Streak</span></div>
+        </div>
+        <div style="text-align:center;margin-top:8px;font-size:0.75rem;color:var(--dim)">
+          🎧 ${data.immersion_minutes} min listening · 📝 ${data.error_count} errors tracked
         </div>
       </div>
+
       <div class="stat-card">
-        <h3>📚 Vocabulary</h3>
-        <div class="stat-row">
-          <div class="stat-chip"><span class="num">${data.vocabulary_count}</span> words saved</div>
-          <div class="stat-chip"><span class="num">${data.sr_total}</span> SR cards</div>
-          <div class="stat-chip"><span class="num">${data.sr_learned}</span> mastered</div>
-          <div class="stat-chip"><span class="num">${data.sr_due}</span> due</div>
+        <h3>📚 Vocabulary & Spaced Repetition</h3>
+        <div class="stat-big-row">
+          <div class="stat-big"><span class="num">${data.vocabulary_count}</span><span class="label">Words Saved</span></div>
+          <div class="stat-big"><span class="num">${data.sr_total}</span><span class="label">SR Cards</span></div>
+          <div class="stat-big"><span class="num">${data.sr_avg_ease}</span><span class="label">Avg Ease</span></div>
+          <div class="stat-big"><span class="num">${data.sr_avg_interval}</span><span class="label">Avg Interval (d)</span></div>
         </div>
-        ${data.vocabulary.length ? '<div style="margin-top:10px">' +
+        ${data.sr_total > 0 ? `
+        <div class="stat-progress">
+          <div class="seg new" style="width:${srNewPct}%"></div>
+          <div class="seg learning" style="width:${srLearningPct}%"></div>
+          <div class="seg learned" style="width:${srLearnedPct}%"></div>
+          <div class="seg due" style="width:${srDuePct}%"></div>
+        </div>
+        <div class="stat-legend">
+          <span><span class="dot" style="background:#6a8aaa"></span> New (${data.sr_new})</span>
+          <span><span class="dot" style="background:var(--accent2)"></span> Learning (${data.sr_learning})</span>
+          <span><span class="dot" style="background:var(--accent)"></span> Learned (${data.sr_learned})</span>
+          <span><span class="dot" style="background:var(--danger)"></span> Due (${data.sr_due})</span>
+        </div>
+        ` : '<p style="color:var(--dim);font-size:0.8rem">No SR cards yet.</p>'}
+        ${data.vocabulary.length ? '<div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap">' +
           data.vocabulary.slice(-10).map(w =>
             `<span class="key-word" style="font-size:0.75rem">${escapeHtml(w.word)}</span>`
-          ).join(' ') + '</div>' : ''}
+          ).join('') + '</div>' : ''}
       </div>
+
+      <div class="stat-card">
+        <h3>🌊 Immersion Practice</h3>
+        <div class="stat-big-row">
+          <div class="stat-big"><span class="num">${data.immersion_sessions}</span><span class="label">Total Sessions</span></div>
+          <div class="stat-big"><span class="num">${data.immersion_minutes}</span><span class="label">Minutes Listened</span></div>
+        </div>
+        ${Object.keys(immerseByDifficulty).length > 0 ? `
+        <div class="stat-dist-row">
+          ${['easy','medium','hard'].filter(d => immerseByDifficulty[d]).map(d => {
+            const labels = {easy:'A2 Easy',medium:'B1 Medium',hard:'B2 Hard'};
+            const colors = {easy:'var(--accent)',medium:'var(--accent2)',hard:'var(--danger)'};
+            return '<div class="stat-dist-item ' + d + '">' +
+              '<span class="count">' + immerseByDifficulty[d] + '</span>' +
+              '<span style="color:' + colors[d] + '">' + labels[d] + '</span></div>';
+          }).join('')}
+        </div>
+        ` : '<p style="color:var(--dim);font-size:0.8rem;margin-top:8px">No immersion sessions yet.</p>'}
+      </div>
+
+      <div class="stat-card">
+        <h3>📝 Recent Activity</h3>
+        ${(data.recent_sessions || []).length > 0
+          ? data.recent_sessions.map(s => {
+              const pct = (s.message_count / maxMsg * 100).toFixed(0);
+              return '<div class="stat-session-item">' +
+                '<span class="ss-date">' + (s.date || '').slice(0, 10) + '</span>' +
+                '<div class="ss-bar"><div class="fill" style="width:' + pct + '%"></div></div>' +
+                '<span class="ss-count">' + s.message_count + '</span></div>';
+            }).join('')
+          : '<p style="color:var(--dim);font-size:0.8rem">No activity yet.</p>'}
+      </div>
+
       <div class="stat-card">
         <h3>📝 Errors (${data.error_count} total)</h3>
         ${Object.keys(data.errors).length === 0
           ? '<p style="color:var(--dim);font-size:0.82rem">No errors tracked yet!</p>'
           : Object.entries(data.errors).sort((a,b) => b[1].count - a[1].count).map(([k,v]) => {
               const maxErr = Math.max(...Object.values(data.errors).map(e => e.count));
-              const pct = (v.count / maxErr * 100);
-              return `<div class="error-bar">
-                <span style="min-width:90px">${k.replace(/_/g,' ')}</span>
-                <div class="fill" style="width:${pct}%"></div>
-                <span>${v.count}x</span>
-              </div>`;
+              const pct = (v.count / maxErr * 100).toFixed(0);
+              return '<div class="error-bar">' +
+                '<span style="min-width:90px">' + k.replace(/_/g,' ') + '</span>' +
+                '<div class="fill" style="width:' + pct + '%"></div>' +
+                '<span>' + v.count + 'x</span></div>';
             }).join('')
         }
       </div>
@@ -804,9 +1441,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const resp = await fetch('/api/face/recognize', {method:'POST'});
     const data = await resp.json();
     if (data.recognized) {
-      // Face recognized! Load users to show identity card
       await loadUsers();
-      // Show personalized greeting
       const msgs = document.getElementById('chat-messages');
       msgs.innerHTML = '';
       const focus = (data.focus_areas || ['speaking']).slice(0,2).join(' and ');
@@ -818,9 +1453,92 @@ document.addEventListener('DOMContentLoaded', async () => {
       return;
     }
   } catch(e) { /* ignore, fall through to normal load */ }
-  // Normal load
+  // Normal load — chat history + sessions
+  await loadChatHistory();
+  await loadSessions();
   loadUsers();
 });
+
+// ── Session management ──
+let currentSessionId = null;
+
+async function loadSessions() {
+  const list = document.getElementById('session-list');
+  try {
+    const resp = await fetch('/api/sessions');
+    const data = await resp.json();
+    const curResp = await fetch('/api/sessions/current');
+    const cur = await curResp.json();
+    currentSessionId = cur.session_id;
+    list.innerHTML = '';
+    for (const s of data.sessions) {
+      const item = document.createElement('div');
+      item.className = 'chat-sidebar-item';
+      if (s.id === currentSessionId) item.classList.add('active');
+      const preview = s.id.slice(0, 8);
+      item.innerHTML = `<div class="si-title">${escapeHtml(preview)}</div><div class="si-meta">${s.message_count} messages</div>`;
+      item.onclick = () => switchChatSession(s.id);
+      list.appendChild(item);
+    }
+  } catch(e) {
+    console.error('Failed to load sessions:', e);
+  }
+}
+
+async function switchChatSession(sessionId) {
+  if (sessionId === currentSessionId) return;
+  try {
+    const resp = await fetch('/api/sessions/switch', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({session_id: sessionId}),
+    });
+    const data = await resp.json();
+    currentSessionId = data.session_id;
+    // Re-render messages
+    const container = document.getElementById('chat-messages');
+    container.innerHTML = '';
+    for (const msg of data.messages) {
+      appendMsg(msg.role, msg.content);
+    }
+    if (data.messages.length === 0) {
+      appendMsg('assistant', "Hi! I'm Emma, your English tutor. 😊 How are you today?");
+    }
+    await loadSessions();
+  } catch(e) {
+    console.error('Failed to switch session:', e);
+  }
+}
+
+async function newChatSession() {
+  try {
+    await fetch('/api/sessions/new', {method: 'POST'});
+    document.getElementById('chat-messages').innerHTML = '';
+    appendMsg('assistant', "Hi! I'm Emma, your English tutor. 😊 How are you today?");
+    await loadSessions();
+  } catch(e) {
+    console.error('Failed to create session:', e);
+  }
+}
+
+async function loadChatHistory() {
+  try {
+    const resp = await fetch('/api/sessions/current');
+    const data = await resp.json();
+    const container = document.getElementById('chat-messages');
+    container.innerHTML = '';
+    if (data.messages && data.messages.length > 0) {
+      for (const msg of data.messages) {
+        appendMsg(msg.role, msg.content);
+      }
+    } else {
+      appendMsg('assistant', "Hi! I'm Emma, your English tutor. 😊 How are you today? Tap 🌊 Immerse to start pretraining, or just chat with me here!");
+    }
+  } catch(e) {
+    console.error('Failed to load chat history:', e);
+    appendMsg('assistant', "Hi! I'm Emma, your English tutor. 😊 How are you today? Tap 🌊 Immerse to start pretraining, or just chat with me here!");
+  }
+}
 </script>
 
 </body>

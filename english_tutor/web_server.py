@@ -12,6 +12,7 @@ import os
 import random
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -36,7 +37,7 @@ from english_tutor.immersion_mode import (
     ImmersionSession,
 )
 from english_tutor.llm_client import LLMClient
-from english_tutor.memory import ConversationMemory
+from english_tutor.memory import ConversationMemory, DEFAULT_STORAGE_DIR
 from english_tutor.spaced_repetition import SpacedRepetition
 from english_tutor.tutor_prompt import (
     CONVERSATION_SUMMARY_PROMPT,
@@ -404,7 +405,79 @@ async def face_recognize():
     return JSONResponse({"recognized": False, "reason": "face not matched"})
 
 
-# ── Immersion API ───────────────────────────────────────────────────
+# ── Session Management API ──────────────────────────────────────────
+
+@app.get("/api/sessions")
+async def list_sessions():
+    """List all conversation sessions."""
+    mem = get_memory()
+    sessions = mem.list_sessions()
+    return JSONResponse({"sessions": sessions})
+
+
+@app.get("/api/sessions/current")
+async def current_session():
+    """Return current session info with messages."""
+    mem = get_memory()
+    if not mem.session_id:
+        mem.new_session()
+    return JSONResponse({
+        "session_id": mem.session_id,
+        "messages": mem.messages,
+        "message_count": len(mem.messages),
+    })
+
+
+@app.post("/api/sessions/switch")
+async def switch_session(request: Request):
+    """Switch to a different session."""
+    mem = get_memory()
+    body = await request.json()
+    session_id = body.get("session_id", "")
+    if not session_id:
+        raise HTTPException(400, "session_id required")
+    ok = mem.load_session(session_id)
+    if not ok:
+        raise HTTPException(404, f"Session not found: {session_id}")
+    return JSONResponse({
+        "session_id": mem.session_id,
+        "messages": mem.messages,
+        "message_count": len(mem.messages),
+    })
+
+
+@app.post("/api/sessions/new")
+async def new_session():
+    """Create a new conversation session."""
+    mem = get_memory()
+    session_id = mem.new_session()
+    return JSONResponse({
+        "session_id": session_id,
+        "messages": [],
+        "message_count": 0,
+    })
+
+
+# ── Immersion History ───────────────────────────────────────────────
+
+IMMERSION_HISTORY_PATH = Path(DEFAULT_STORAGE_DIR) / "immersion_history.json"
+
+
+def _load_immersion_history() -> list[dict]:
+    """Load immersion history from disk."""
+    if IMMERSION_HISTORY_PATH.exists():
+        try:
+            return json.loads(IMMERSION_HISTORY_PATH.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    return []
+
+
+def _save_immersion_history(records: list[dict]):
+    """Save immersion history to disk."""
+    IMMERSION_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    IMMERSION_HISTORY_PATH.write_text(json.dumps(records, ensure_ascii=False, indent=2))
+  # ── Immersion API ───────────────────────────────────────────────────
 
 @app.post("/api/immerse/generate")
 async def immerse_generate(request: Request):
@@ -445,20 +518,139 @@ async def immerse_generate(request: Request):
         raise HTTPException(500, f"LLM error: {e}")
 
     data = ImmersionSession._parse_json_response(response)
-    passage = ImmersionSession._clean_passage(data.get("passage", response))
+    # Try multiple possible keys for each field — LLMs don't always use exact names
+    passage = (
+        data.get("passage")
+        or data.get("text")
+        or data.get("content")
+        or data.get("body")
+        or response
+    )
+    passage = ImmersionSession._clean_passage(passage)
+    title = (
+        data.get("title")
+        or data.get("headline")
+        or "Listening Passage"
+    )
+    key_words = (
+        data.get("key_words")
+        or data.get("keywords")
+        or data.get("vocabulary")
+        or data.get("vocab")
+        or []
+    )
+    closing_thought = (
+        data.get("closing_thought")
+        or data.get("closing")
+        or data.get("reflection")
+        or "What did you notice in what you heard?"
+    )
 
-    return JSONResponse({
-        "title": data.get("title", "Listening Passage"),
+    # Auto-generate TTS audio and save to history
+    audio_url = ""
+    try:
+        import edge_tts
+        filename = f"imm_{hash(passage) % 1000000:06d}.mp3"
+        output_path = AUDIO_DIR / filename
+        if not output_path.exists():
+            communicate = edge_tts.Communicate(passage, voice="en-US-JennyNeural")
+            await communicate.save(str(output_path))
+        if output_path.exists():
+            audio_url = f"/api/audio/{filename}"
+    except Exception:
+        pass
+
+    # Save to history
+    record = {
+        "id": datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S"),
+        "title": title,
+        "passage": passage,
+        "key_words": key_words,
+        "closing_thought": closing_thought,
         "content_type": content_type,
         "difficulty": difficulty,
-        "key_words": data.get("key_words", []),
+        "type_label": CONTENT_TYPE_LABELS.get(content_type, content_type),
+        "difficulty_label": DIFFICULTY_LABELS.get(difficulty, difficulty),
+        "topic": topic,
+        "audio_url": audio_url,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    records = _load_immersion_history()
+    records.insert(0, record)
+    _save_immersion_history(records)
+
+    return JSONResponse({
+        "id": record["id"],
+        "title": title,
+        "content_type": content_type,
+        "difficulty": difficulty,
+        "key_words": key_words,
         "passage": passage,
-        "closing_thought": data.get(
-            "closing_thought", "What did you notice in what you heard?"
-        ),
+        "closing_thought": closing_thought,
+        "audio_url": audio_url,
         "type_label": CONTENT_TYPE_LABELS.get(content_type, content_type),
         "difficulty_label": DIFFICULTY_LABELS.get(difficulty, difficulty),
     })
+
+
+@app.get("/api/immerse/history")
+async def immerse_history():
+    """List all immersion practice records."""
+    records = _load_immersion_history()
+    # Return summary (without full passage for performance)
+    summaries = []
+    for r in records:
+        summaries.append({
+            "id": r.get("id", ""),
+            "title": r.get("title", ""),
+            "content_type": r.get("content_type", ""),
+            "difficulty": r.get("difficulty", ""),
+            "type_label": r.get("type_label", ""),
+            "difficulty_label": r.get("difficulty_label", ""),
+            "audio_url": r.get("audio_url", ""),
+            "created_at": r.get("created_at", ""),
+        })
+    return JSONResponse({"records": summaries})
+
+
+@app.get("/api/immerse/history/{record_id}")
+async def immerse_history_detail(record_id: str):
+    """Return a single immersion record with full passage."""
+    records = _load_immersion_history()
+    for r in records:
+        if r.get("id") == record_id:
+            return JSONResponse(r)
+    raise HTTPException(404, "Record not found")
+
+
+@app.post("/api/immerse/regenerate-audio/{record_id}")
+async def immerse_regenerate_audio(record_id: str):
+    """Regenerate TTS audio for an existing immersion record."""
+    records = _load_immersion_history()
+    for i, r in enumerate(records):
+        if r.get("id") == record_id:
+            passage = r.get("passage", "")
+            if not passage:
+                raise HTTPException(400, "Record has no passage text")
+            try:
+                import edge_tts
+                filename = f"imm_{hash(passage) % 1000000:06d}.mp3"
+                output_path = AUDIO_DIR / filename
+                if not output_path.exists():
+                    communicate = edge_tts.Communicate(passage, voice="en-US-JennyNeural")
+                    await communicate.save(str(output_path))
+                if output_path.exists():
+                    audio_url = f"/api/audio/{filename}"
+                    records[i]["audio_url"] = audio_url
+                    _save_immersion_history(records)
+                    return JSONResponse({"audio_url": audio_url})
+                else:
+                    raise HTTPException(500, "Failed to generate audio file")
+            except ImportError:
+                raise HTTPException(500, "edge-tts not installed")
+            except Exception as e:
+                raise HTTPException(500, str(e))
+    raise HTTPException(404, "Record not found")
 
 
 # ── Stats API ───────────────────────────────────────────────────────
@@ -472,10 +664,23 @@ async def get_stats():
     sr_stats = srs.get_stats()
     vocab = mem.get_vocabulary()
     errors = mem.stats.get("common_errors", {})
+    sessions = mem.list_sessions()
+
+    # Immersion stats
+    immersion_records = _load_immersion_history()
+    immersion_count = len(immersion_records)
+    immersion_minutes = immersion_count * 3  # ~3 min per session
+
+    # Streak
+    try:
+        streak_days = mem._calc_streak()
+    except Exception:
+        streak_days = 0
 
     return JSONResponse({
         "sessions": mem.stats.get("total_sessions", 0),
         "messages": mem.stats.get("total_messages", 0),
+        "streak_days": streak_days,
         "vocabulary_count": len(vocab),
         "vocabulary": vocab[-20:],
         "errors": {
@@ -485,8 +690,21 @@ async def get_stats():
         "error_count": sum(v["count"] for v in errors.values()),
         "sr_total": sr_stats.get("total", 0),
         "sr_learned": sr_stats.get("learned", 0),
-        "sr_due": sr_stats.get("due", 0),
         "sr_learning": sr_stats.get("learning", 0),
+        "sr_new": sr_stats.get("new", 0),
+        "sr_due": sr_stats.get("due", 0),
+        "sr_avg_ease": sr_stats.get("avg_ease", 0),
+        "sr_avg_interval": sr_stats.get("avg_interval", 0),
+        "immersion_sessions": immersion_count,
+        "immersion_minutes": immersion_minutes,
+        "recent_sessions": [
+            {
+                "id": s["id"],
+                "date": s.get("date", ""),
+                "message_count": s.get("message_count", 0),
+            }
+            for s in sessions[:5]
+        ],
     })
 
 

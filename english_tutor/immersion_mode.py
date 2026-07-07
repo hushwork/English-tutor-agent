@@ -217,15 +217,31 @@ class ImmersionSession:
         data = self._parse_json_response(response)
 
         # Clean passage text: strip any markdown or artifacts
-        passage = self._clean_passage(data.get("passage", response))
+        # Try multiple possible keys — LLMs don't always use exact names
+        passage = self._clean_passage(
+            data.get("passage")
+            or data.get("text")
+            or data.get("content")
+            or data.get("body")
+            or response
+        )
 
         content = ImmersionContent(
-            title=data.get("title", "Listening Passage"),
+            title=data.get("title")
+                 or data.get("headline")
+                 or "Listening Passage",
             content_type=content_type,
             difficulty=self.difficulty,
-            key_words=data.get("key_words", []),
+            key_words=data.get("key_words")
+                     or data.get("keywords")
+                     or data.get("vocabulary")
+                     or data.get("vocab")
+                     or [],
             passage=passage,
-            closing_thought=data.get("closing_thought", "What did you notice in what you heard?"),
+            closing_thought=data.get("closing_thought")
+                           or data.get("closing")
+                           or data.get("reflection")
+                           or "What did you notice in what you heard?",
         )
 
         self.current_content = content
@@ -273,7 +289,15 @@ class ImmersionSession:
         except (ValueError, json.JSONDecodeError):
             pass
 
-        console.print("[yellow]Warning: Could not parse JSON from LLM response, using raw text.[/yellow]")
+        # Final fallback: try parsing the raw response as JSON directly
+        # (catches cases where response IS valid JSON but earlier heuristics missed it)
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+
         return {"passage": text}
 
     @staticmethod

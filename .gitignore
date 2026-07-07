@@ -8,6 +8,8 @@ build/
 # Environment
 .env
 .env.local
+venv/
+.reasonix/
 
 # Data (per-user session files)
 .english-tutor-data/

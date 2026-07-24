@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Camera Tutor — Parent Dashboard</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #242836;
+    --text: #e4e6ef;
+    --text2: #8b8fa3;
+    --accent: #6c8cff;
+    --accent2: #4ecf8d;
+    --accent3: #f5a623;
+    --red: #ff5c6c;
+    --border: #2a2d3a;
+    --radius: 12px;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding-bottom: 80px;
+  }
+  .header {
+    padding: 20px 16px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .header h1 {
+    font-size: 20px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .header .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+  .status-dot.online { background: var(--accent2); }
+  .status-dot.resting { background: var(--accent3); }
+  .status-dot.offline { background: var(--red); }
+
+  .tab-bar {
+    display: flex;
+    padding: 0 16px;
+    gap: 4px;
+    border-bottom: 1px solid var(--border);
+  }
+  .tab-bar button {
+    flex: 1;
+    padding: 10px 8px;
+    background: none;
+    border: none;
+    color: var(--text2);
+    font-size: 14px;
+    font-weight: 600;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .tab-bar button.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  .content { padding: 16px; }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* Cards */
+  .metric-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .metric-card {
+    background: var(--surface);
+    border-radius: var(--radius);
+    padding: 14px 12px;
+    text-align: center;
+  }
+  .metric-card .value {
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--accent);
+    line-height: 1.1;
+  }
+  .metric-card .label {
+    font-size: 11px;
+    color: var(--text2);
+    margin-top: 4px;
+  }
+  .metric-card .value.green { color: var(--accent2); }
+  .metric-card .value.amber { color: var(--accent3); }
+
+  .section {
+    background: var(--surface);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+  .section h3 {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: var(--text2);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .bar-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .bar-row .label { font-size: 12px; color: var(--text2); min-width: 50px; }
+  .bar-row .bar-bg {
+    flex: 1;
+    height: 8px;
+    background: var(--surface2);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .bar-row .bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    background: var(--accent);
+    transition: width 0.5s;
+  }
+
+  .highlight-card {
+    background: var(--surface2);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .highlight-card .icon { font-size: 20px; }
+  .highlight-card .text { font-size: 13px; flex:1; }
+
+  .vocab-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .vocab-row .badge {
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 600;
+  }
+  .badge.learned { background: #1a3a2a; color: var(--accent2); }
+  .badge.learning { background: #3a2a1a; color: var(--accent3); }
+  .badge.new { background: #2a2a3a; color: var(--text2); }
+
+  .settings-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .settings-row .label { font-size: 13px; }
+  .settings-row .value { font-size: 13px; color: var(--text2); }
+  .settings-row input[type="range"] { width: 120px; }
+
+  .device-status {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .status-chip {
+    background: var(--surface2);
+    border-radius: 20px;
+    padding: 6px 14px;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .bottom-nav {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    display: flex;
+    padding: 8px 0;
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
+  }
+  .bottom-nav button {
+    flex: 1;
+    background: none;
+    border: none;
+    color: var(--text2);
+    font-size: 11px;
+    padding: 6px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+  }
+  .bottom-nav button.active { color: var(--accent); }
+  .bottom-nav button .icon { font-size: 20px; }
+
+  .loading {
+    text-align: center;
+    padding: 40px;
+    color: var(--text2);
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>
+    <span class="status-dot online" id="statusDot"></span>
+    Camera Tutor
+  </h1>
+  <span style="font-size:12px;color:var(--text2)" id="dateDisplay"></span>
+</div>
+
+<div class="tab-bar">
+  <button class="active" data-tab="today">Today</button>
+  <button data-tab="words">Words</button>
+  <button data-tab="device">Device</button>
+</div>
+
+<div class="content">
+
+  <!-- Today Tab -->
+  <div class="tab-content active" id="tab-today">
+    <div class="metric-grid">
+      <div class="metric-card">
+        <div class="value" id="metricInput">--</div>
+        <div class="label">English Input (sentences)</div>
+      </div>
+      <div class="metric-card">
+        <div class="value green" id="metricSpoke">--</div>
+        <div class="label">Child Spoke</div>
+      </div>
+      <div class="metric-card">
+        <div class="value amber" id="metricWords">--</div>
+        <div class="label">New Words</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>📊 Activity</h3>
+      <div class="bar-row">
+        <span class="label">English exposure</span>
+        <div class="bar-bg"><div class="bar-fill" id="barExposure" style="width:0%"></div></div>
+        <span style="font-size:12px;color:var(--text2)" id="valExposure">0 min</span>
+      </div>
+      <div class="bar-row">
+        <span class="label">Interaction</span>
+        <div class="bar-bg"><div class="bar-fill" id="barInteraction" style="width:0%"></div></div>
+        <span style="font-size:12px;color:var(--text2)" id="valInteraction">0 min</span>
+      </div>
+      <div class="bar-row">
+        <span class="label">Focus</span>
+        <div class="bar-bg"><div class="bar-fill" id="barFocus" style="width:0%;background:var(--accent2)"></div></div>
+        <span style="font-size:12px;color:var(--text2)" id="valFocus">0 min</span>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>🎙️ Highlights</h3>
+      <div id="highlightsContainer">
+        <div class="loading">Loading highlights...</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>📚 Today's Activities</h3>
+      <div id="activitiesContainer">
+        <div class="loading">Loading activities...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Words Tab -->
+  <div class="tab-content" id="tab-words">
+    <div class="section">
+      <h3>📚 Vocabulary Progress</h3>
+      <div class="metric-grid">
+        <div class="metric-card">
+          <div class="value" id="srTotal">--</div>
+          <div class="label">Total Cards</div>
+        </div>
+        <div class="metric-card">
+          <div class="value green" id="srLearned">--</div>
+          <div class="label">Learned ✓</div>
+        </div>
+        <div class="metric-card">
+          <div class="value amber" id="srDue">--</div>
+          <div class="label">Due Today</div>
+        </div>
+      </div>
+    </div>
+    <div class="section">
+      <h3>📝 Recent Words</h3>
+      <div id="vocabContainer">
+        <div class="loading">Loading vocabulary...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Device Tab -->
+  <div class="tab-content" id="tab-device">
+    <div class="section">
+      <h3>🔌 Device Status</h3>
+      <div class="device-status" id="deviceStatus">
+        <div class="status-chip">📷 Camera: --</div>
+        <div class="status-chip">🎤 Mic: --</div>
+        <div class="status-chip">📶 WiFi: --</div>
+        <div class="status-chip">🧠 Model: --</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>⚙️ Settings</h3>
+      <div class="settings-row">
+        <span class="label">Volume</span>
+        <input type="range" min="0" max="100" value="70" id="volumeSlider">
+        <span class="value" id="volumeVal">70%</span>
+      </div>
+      <div class="settings-row">
+        <span class="label">Interventions per hour</span>
+        <input type="range" min="1" max="10" value="5" id="interveneSlider">
+        <span class="value" id="interveneVal">5</span>
+      </div>
+      <div class="settings-row">
+        <span class="label">Tutor State</span>
+        <span class="value" id="tutorState">observing</span>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>🛌 Quick Actions</h3>
+      <button onclick="setRestMode()" style="
+        width:100%;padding:12px;border:1px solid var(--red);border-radius:8px;
+        background:var(--surface2);color:var(--red);font-size:14px;cursor:pointer;
+        margin-bottom:8px;
+      ">🌙 Put to Sleep</button>
+      <button onclick="wakeDevice()" style="
+        width:100%;padding:12px;border:1px solid var(--accent2);border-radius:8px;
+        background:var(--surface2);color:var(--accent2);font-size:14px;cursor:pointer;
+      ">☀️ Wake Up</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Tab Navigation ─────────────────────────────────────────────
+document.querySelectorAll('.tab-bar button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-bar button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    if (btn.dataset.tab === 'today') loadToday();
+    if (btn.dataset.tab === 'words') loadWords();
+  });
+});
+
+document.getElementById('dateDisplay').textContent = new Date().toLocaleDateString('en-US', {
+  weekday: 'short', month: 'short', day: 'numeric'
+});
+
+// ── Data Loading ───────────────────────────────────────────────
+async function loadToday() {
+  try {
+    const resp = await fetch('/api/report/daily');
+    const data = await resp.json();
+
+    document.getElementById('metricInput').textContent = data.total_english_input || 0;
+    document.getElementById('metricSpoke').textContent = data.child_utterances || 0;
+    document.getElementById('metricWords').textContent = (data.new_vocabulary || []).length;
+
+    // Bars (relative to 50 sentences/10 min/30 min targets)
+    document.getElementById('barExposure').style.width = Math.min(100, (data.total_english_exposure_minutes||0)/10*100) + '%';
+    document.getElementById('valExposure').textContent = (data.total_english_exposure_minutes||0).toFixed(0) + ' min';
+    document.getElementById('barInteraction').style.width = Math.min(100, (data.total_interaction_minutes||0)/10*100) + '%';
+    document.getElementById('valInteraction').textContent = (data.total_interaction_minutes||0).toFixed(0) + ' min';
+    document.getElementById('barFocus').style.width = Math.min(100, (data.focus_minutes||0)/30*100) + '%';
+    document.getElementById('valFocus').textContent = (data.focus_minutes||0).toFixed(0) + ' min';
+
+    // Highlights
+    const hc = document.getElementById('highlightsContainer');
+    if (data.highlights && data.highlights.length > 0) {
+      hc.innerHTML = data.highlights.map((h,i) =>
+        `<div class="highlight-card">
+          <span class="icon">💬</span>
+          <span class="text">${escapeHtml(h)}</span>
+        </div>`
+      ).join('');
+    } else {
+      hc.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2)">No highlights yet today — keep listening!</div>';
+    }
+
+    // Activities
+    const ac = document.getElementById('activitiesContainer');
+    if (data.activities && data.activities.length > 0) {
+      ac.innerHTML = data.activities.map(a =>
+        `<div class="highlight-card">
+          <span class="icon">${activityIcon(a)}</span>
+          <span class="text">${capitalize(a)}</span>
+        </div>`
+      ).join('');
+    } else {
+      ac.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2)">No activities recorded yet</div>';
+    }
+
+    // Mood
+    document.getElementById('statusDot').className = 'status-dot ' +
+      (data.dominant_mood === 'happy' || data.dominant_mood === 'focused' ? 'online' : 'resting');
+
+  } catch(e) {
+    console.error('Failed to load today:', e);
+    document.querySelectorAll('.metric-card .value').forEach(el => el.textContent = '--');
+  }
+}
+
+async function loadWords() {
+  try {
+    const resp = await fetch('/api/vocabulary');
+    const data = await resp.json();
+    const stats = data.stats || {};
+    document.getElementById('srTotal').textContent = stats.total || 0;
+    document.getElementById('srLearned').textContent = stats.learned || 0;
+    document.getElementById('srDue').textContent = stats.due || 0;
+
+    const cards = data.cards || [];
+    const vc = document.getElementById('vocabContainer');
+    if (cards.length === 0) {
+      vc.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2)">No vocabulary cards yet</div>';
+      return;
+    }
+    vc.innerHTML = cards.slice(0, 15).map(c => {
+      let badge = 'new';
+      if (c.interval_days >= 21) badge = 'learned';
+      else if (c.interval_days > 0) badge = 'learning';
+      return `<div class="vocab-row">
+        <span><strong>${escapeHtml(c.word)}</strong> — ${escapeHtml((c.definition||'').slice(0,30))}</span>
+        <span class="badge ${badge}">${badge}</span>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    console.error('Failed to load words:', e);
+  }
+}
+
+// ── Device Actions ─────────────────────────────────────────────
+async function loadDeviceStatus() {
+  try {
+    const resp = await fetch('/api/device/status');
+    const data = await resp.json();
+    const ds = document.getElementById('deviceStatus');
+    ds.innerHTML = `
+      <div class="status-chip">📷 Camera: ${data.camera_connected?'✅':'❌'}</div>
+      <div class="status-chip">🎤 Mic: ${data.microphone_connected?'✅':'❌'}</div>
+      <div class="status-chip">📶 WiFi: ${data.wifi_connected?'✅':'❌'}</div>
+      <div class="status-chip">🧠 Model: ${data.model_mode||'local'}</div>
+    `;
+    document.getElementById('tutorState').textContent = data.tutor_state || 'observing';
+    document.getElementById('volumeSlider').value = data.volume || 70;
+    document.getElementById('volumeVal').textContent = (data.volume||70) + '%';
+    document.getElementById('interveneSlider').value = data.max_interventions || 5;
+    document.getElementById('interveneVal').textContent = data.max_interventions || 5;
+  } catch(e) {
+    console.error('Failed to load device status:', e);
+  }
+}
+
+async function setRestMode() {
+  await fetch('/api/device/rest', {method:'POST'});
+  loadDeviceStatus();
+}
+
+async function wakeDevice() {
+  await fetch('/api/device/wake', {method:'POST'});
+  loadDeviceStatus();
+}
+
+// ── Settings Sliders ───────────────────────────────────────────
+document.getElementById('volumeSlider').addEventListener('input', function() {
+  document.getElementById('volumeVal').textContent = this.value + '%';
+  fetch('/api/device/settings?volume=' + this.value, {method:'POST'});
+});
+document.getElementById('interveneSlider').addEventListener('input', function() {
+  document.getElementById('interveneVal').textContent = this.value;
+  fetch('/api/device/settings?max_interventions=' + this.value, {method:'POST'});
+});
+
+// ── Utils ──────────────────────────────────────────────────────
+function escapeHtml(s) { return (s||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+function activityIcon(a) {
+  const icons = {playing:'🧸',drawing:'🎨',reading:'📖',studying:'✏️',idle:'😴',moving:'🏃'};
+  return icons[a] || '📍';
+}
+
+// ── Init ───────────────────────────────────────────────────────
+loadToday();
+loadDeviceStatus();
+</script>
+</body>
+</html>

@@ -31,6 +31,13 @@ from english_tutor.tutor_prompt import (
     build_topic_suggestion,
     CONVERSATION_SUMMARY_PROMPT,
 )
+from english_tutor.user_manager import UserManager, UserProfile, VALID_CEFR, VALID_FOCUS
+from english_tutor.face_utils import (
+    is_camera_available,
+    capture_face_for_registration,
+    find_matching_user,
+    is_face_recognition_available,
+)
 
 load_dotenv()
 
@@ -63,6 +70,9 @@ COMMANDS = {
     "/speak": "Read the last response aloud (TTS)",
     "/record": "Record voice and transcribe (e.g. /record 5)",
     "/immerse": "English immersion mode — listen first, understand naturally",
+    "/users": "List all learners on this device",
+    "/switch <name>": "Switch to a different learner profile",
+    "/profile": "View or edit your learning profile",
     "/save": "Save and exit",
     "/quit": "Exit the tutor",
 }
@@ -215,13 +225,203 @@ def print_thinking():
     console.print("[dim]Emma is thinking...[/dim]")
 
 
+# ── User management helpers ────────────────────────────────────────
+
+def print_users_table(um: UserManager):
+    """Display all registered users."""
+    users = um.list_users()
+    if not users:
+        console.print("[dim]No learners registered yet. Create one to get started![/dim]")
+        return
+
+    table = Table(title="👥 Learners", box=None, header_style="bold cyan")
+    table.add_column("Name")
+    table.add_column("Target")
+    table.add_column("Focus")
+    table.add_column("Daily Goal")
+    table.add_column("Active")
+    for u in users:
+        active = "✅" if um.active_user and u.user_id == um.active_user.user_id else ""
+        table.add_row(
+            u.name,
+            u.target_cefr,
+            ", ".join(u.focus_areas[:2]),
+            f"{u.daily_goal_minutes} min",
+            active,
+        )
+    console.print(table)
+
+
+def create_user_wizard(um: UserManager) -> UserProfile | None:
+    """Interactive wizard to create a new learner profile."""
+    console.print(Panel(
+        "Let's set up your learning profile! 🎓",
+        title="New Learner",
+        border_style="cyan",
+        width=WIDTH,
+    ))
+
+    try:
+        name = Prompt.ask("[bold]What's your name?[/bold]")
+        if not name.strip():
+            return None
+
+        console.print(f"\n[dim]CEFR levels: A1 (beginner) → C2 (mastery)[/dim]")
+        target = Prompt.ask(
+            "[bold]Your target level[/bold]",
+            choices=["A1", "A2", "B1", "B2", "C1", "C2"],
+            default="B1",
+        )
+
+        console.print(f"\n[dim]Focus areas: {', '.join(VALID_FOCUS)}[/dim]")
+        focus_str = Prompt.ask(
+            "[bold]What do you want to focus on?[/bold] (comma-separated)",
+            default="speaking, reading",
+        )
+        focus_areas = [f.strip() for f in focus_str.split(",") if f.strip() in VALID_FOCUS]
+        if not focus_areas:
+            focus_areas = ["speaking", "reading"]
+
+        goal_str = Prompt.ask(
+            "[bold]Daily learning goal (minutes)[/bold]",
+            default="20",
+        )
+        daily_goal = max(5, min(120, int(goal_str) if goal_str.isdigit() else 20))
+
+        # Face recognition setup
+        face_embedding = None
+        if is_camera_available():
+            console.print()
+            use_face = Prompt.ask(
+                "[bold]Set up face recognition?[/bold] (so Emma knows it's you)",
+                choices=["y", "n"],
+                default="n",
+            )
+            if use_face == "y":
+                console.print("[cyan]📷 Look at the camera...[/cyan]")
+                face_img, embedding = capture_face_for_registration()
+                if embedding:
+                    face_embedding = embedding
+                    console.print("[green]✓ Face registered! Emma will recognize you next time.[/green]")
+                elif face_img is not None:
+                    console.print("[yellow]Face detected but recognition library not installed.[/yellow]")
+                    console.print("[dim]Install face_recognition for auto-recognition: pip install face-recognition[/dim]")
+                else:
+                    console.print("[yellow]No face detected. You can set this up later.[/yellow]")
+
+        profile = um.create_user(
+            name=name.strip(),
+            target_cefr=target,
+            focus_areas=focus_areas,
+            daily_goal_minutes=daily_goal,
+            face_embedding=face_embedding,
+        )
+        um.set_active_user(profile.user_id)
+        console.print(f"\n[green]Welcome, {name}! Your profile is ready. 🎉[/green]")
+        console.print(f"[dim]{profile.goal_summary()}[/dim]\n")
+        return profile
+
+    except (EOFError, KeyboardInterrupt):
+        return None
+
+
+def select_user_wizard(um: UserManager) -> UserProfile | None:
+    """Show user list and let the user select or create a profile."""
+    users = um.list_users()
+
+    if not users:
+        console.print("[yellow]No learners found. Let's create your first profile![/yellow]\n")
+        return create_user_wizard(um)
+
+    # Try face recognition first
+    recognized = _try_face_recognition(um, users)
+    if recognized:
+        return recognized
+
+    console.print()
+    print_users_table(um)
+    console.print()
+
+    choices = [u.name for u in users] + ["[Create new learner]"]
+    choice = Prompt.ask(
+        "[bold]Who's learning?[/bold]",
+        choices=choices,
+        default=users[0].name,
+    )
+
+    if choice == "[Create new learner]":
+        return create_user_wizard(um)
+
+    for u in users:
+        if u.name == choice:
+            profile = um.set_active_user(u.user_id)
+            console.print(f"[green]Welcome back, {u.name}![/green]")
+            console.print(f"[dim]{u.goal_summary()}[/dim]\n")
+            return profile
+
+    return None
+
+
+def print_profile(um: UserManager):
+    """Display and optionally edit the current user's profile."""
+    profile = um.active_user
+    if not profile:
+        console.print("[yellow]No active learner. Use /switch to select one.[/yellow]")
+        return
+
+    table = Table(title=f"🎓 Profile: {profile.name}", box=None, header_style="bold cyan")
+    table.add_column("Field", style="bold")
+    table.add_column("Value")
+    table.add_row("Name", profile.name)
+    table.add_row("Target CEFR", profile.target_cefr)
+    table.add_row("Focus areas", ", ".join(profile.focus_areas))
+    table.add_row("Daily goal", f"{profile.daily_goal_minutes} minutes")
+    table.add_row("Sessions", str(profile.last_active[:10]))
+    console.print(table)
+
+    console.print("\n[dim]To edit: type /switch and create a new profile, or use the web dashboard.[/dim]")
+
+
+def _try_face_recognition(um: UserManager, users: list[UserProfile]) -> UserProfile | None:
+    """Attempt to recognize the person via camera. Returns matched user or None."""
+    if not is_camera_available() or not is_face_recognition_available():
+        return None
+
+    # Collect known embeddings
+    known = [(u.user_id, u.face_embedding) for u in users if u.face_embedding]
+    if not known:
+        return None
+
+    console.print("[cyan]📷 Looking for your face...[/cyan]")
+    face_img, embedding = capture_face_for_registration(num_attempts=1)
+    if not embedding:
+        return None
+
+    match_id = find_matching_user(embedding, known)
+    if match_id:
+        profile = um.set_active_user(match_id)
+        console.print(f"[green]👋 Recognized you, {profile.name}! Welcome back![/green]")
+        console.print(f"[dim]{profile.goal_summary()}[/dim]\n")
+        return profile
+
+    console.print("[dim]Face not recognized. Please select your profile.[/dim]")
+    return None
+
+
 # ── Main conversation loop ──────────────────────────────────────────
 
-async def chat_loop(client: LLMClient, memory: ConversationMemory, sr: SpacedRepetition):
+async def chat_loop(client: LLMClient, memory: ConversationMemory, sr: SpacedRepetition,
+                   user_profile: UserProfile | None = None):
     """Run the interactive chat session."""
 
-    # Build initial messages with system prompt
+    # Build initial messages with system prompt, enhanced with user context
     system_msg = build_system_message()
+    if user_profile:
+        extra = (
+            f"\n\n## Current Learner\n"
+            f"{user_profile.prompt_context()}"
+        )
+        system_msg["content"] += extra
     messages = [system_msg]
 
     # Add conversation history if resuming
@@ -232,12 +432,24 @@ async def chat_loop(client: LLMClient, memory: ConversationMemory, sr: SpacedRep
     # If this is a new session, have Emma start the conversation
     last_response = ""
     if len(messages) == 1:
-        greeting = (
-            "Hi there! I'm Emma, your English tutor. 😊 "
-            "How are you today? What would you like to talk about?\n\n"
-            "Here are some ideas if you're not sure:\n"
-            f"- {build_topic_suggestion()}"
-        )
+        if user_profile:
+            focus_str = ", ".join(user_profile.focus_areas[:2])
+            greeting = (
+                f"Welcome back, **{user_profile.name}**! 👋 I'm Emma, your English tutor.\n\n"
+                f"You're working toward **{user_profile.target_cefr}** level, "
+                f"focusing on **{focus_str}** "
+                f"({user_profile.daily_goal_minutes} min/day).\n\n"
+                f"How are you today? What would you like to talk about?\n\n"
+                f"Here's an idea if you're not sure:\n"
+                f"- {build_topic_suggestion()}"
+            )
+        else:
+            greeting = (
+                "Hi there! I'm Emma, your English tutor. 😊 "
+                "How are you today? What would you like to talk about?\n\n"
+                "Here are some ideas if you're not sure:\n"
+                f"- {build_topic_suggestion()}"
+            )
         messages.append({"role": "assistant", "content": greeting})
         memory.save_message("assistant", greeting)
         last_response = greeting
@@ -321,6 +533,16 @@ async def chat_loop(client: LLMClient, memory: ConversationMemory, sr: SpacedRep
                     console.print("[yellow]No speech detected. Try again or type your message.[/yellow]")
                     continue
 
+            elif cmd == "/users":
+                console.print("[yellow]Type /quit to return to the user selection menu.[/yellow]")
+                continue
+            elif cmd.startswith("/switch"):
+                console.print("[yellow]Type /quit to return to the user selection menu.[/yellow]")
+                continue
+            elif cmd == "/profile":
+                console.print("[yellow]Type /quit to return to the user selection menu.[/yellow]")
+                continue
+
             elif cmd == "/read":
                 console.print("[cyan]Opening reading mode...[/cyan]")
                 await reading_session(client, memory, sr)
@@ -401,16 +623,28 @@ async def main():
         console.print("  DEEPSEEK_API_KEY=sk-your-key-here")
         sys.exit(1)
 
-    # Initialize
+    # Initialize LLM client
     client = LLMClient(api_key=api_key)
-    memory = ConversationMemory()
-    sr = SpacedRepetition()
 
-    # Try to resume the most recent session
+    # Initialize UserManager
+    um = UserManager()
+
+    # Select user profile
+    print_welcome()
+    user_profile = select_user_wizard(um)
+    if not user_profile:
+        console.print("[yellow]No profile selected. Exiting.[/yellow]")
+        sys.exit(0)
+
+    # Create per-user memory and SR
+    memory = ConversationMemory(user_id=user_profile.user_id)
+    sr = SpacedRepetition(user_id=user_profile.user_id)
+
+    # Try to resume the most recent session for this user
     sessions = memory.list_sessions()
     resume_id = None
     for s in sessions:
-        if s["message_count"] > 1:  # Has real conversation
+        if s["message_count"] > 1:
             resume_id = s["id"]
             break
 
@@ -419,8 +653,6 @@ async def main():
         console.print(f"[dim]📋 Resuming session from {s['date'][:10]} ({s['message_count']} messages)[/dim]")
     else:
         memory.new_session()
-
-    print_welcome()
 
     # If resuming, show a recap of the last exchange
     if resume_id and len(memory.messages) >= 2:
@@ -443,7 +675,7 @@ async def main():
             ))
 
     try:
-        await chat_loop(client, memory, sr)
+        await chat_loop(client, memory, sr, user_profile)
     finally:
         await client.close()
         console.print("[dim]Session saved. See you next time![/dim]")

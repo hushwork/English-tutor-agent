@@ -137,9 +137,11 @@ The infant has no competitor. Their `apple` mapping is the only one. Sleep conso
 ```
 run.py
   └─ cli.main()
+       ├─ UserManager ──► .english-tutor-data/users.json + per-user subdirs
        ├─ LLMClient ──► httpx.AsyncClient ──► POST /chat/completions (SSE streaming)
-       ├─ ConversationMemory ──► .english-tutor-data/session_*.json + stats.json
-       ├─ SpacedRepetition ──► .english-tutor-data/spaced_repetition.json (SM-2)
+       ├─ ConversationMemory ──► .english-tutor-data/{user_id}/sessions/ + stats.json
+       ├─ SpacedRepetition ──► .english-tutor-data/{user_id}/spaced_repetition.json (SM-2)
+       ├─ face_utils ──► OpenCV Haar cascade + face_recognition embeddings (optional)
        │
        └─ chat_loop()  ← the REPL
             ├─ /chat    → Default: streaming conversation with Emma
@@ -152,6 +154,9 @@ run.py
             ├─ /stats   → memory.get_stats_summary(sr_stats)
             ├─ /words   → memory.get_vocabulary()
             ├─ /errors  → memory.stats["common_errors"]
+            ├─ /users   → UserManager.list_users()
+            ├─ /switch  → UserManager.set_active_user()
+            ├─ /profile → UserManager.active_user
             └─ /topic   → tutor_prompt.build_topic_suggestion()
 ```
 
@@ -166,6 +171,10 @@ run.py
 | `tts.py` | Text-to-speech (spd-say + edge-tts) | Cross-cutting |
 | `stt.py` | Speech-to-text (faster-whisper) | Cross-cutting |
 | `memory.py` | Session persistence + stats + error tracking | Infrastructure |
+| `user_manager.py` | Multi-user profiles, learning goals, face data | Infrastructure |
+| `face_utils.py` | Face detection + recognition (OpenCV + optional dlib) | Infrastructure |
+| `web_server.py` | FastAPI web server + REST API + mobile SPA | Delivery |
+| `static/index.html` | Mobile-first single-page web application | Delivery |
 
 ---
 
@@ -211,6 +220,66 @@ SM-2 algorithm (same as Anki) for vocabulary retention:
 - `/words`: Last 20 saved vocabulary entries
 - `/errors`: Error pattern analysis with frequency bars and practice tips
 
+### 7. Multi-User Agent Memory 🧠
+
+The tutor supports **multiple learners on the same device** — ideal for households where several family members learn English together. Each learner has a completely isolated profile with their own:
+
+- **Fixed learning goals**: Target CEFR level (A1–C2), focus areas (speaking/reading/listening/writing/vocabulary/grammar), and daily practice goal (minutes)
+- **Personal conversation memory**: Separate chat history, vocabulary, and error patterns
+- **Independent spaced repetition**: Each user's SM-2 cards are tracked independently — Mom's "diligent" card won't show up in her child's review queue
+- **Profile persistence**: All data survives across sessions, stored under `.english-tutor-data/{user_id}/`
+
+#### How It Works
+
+```
+.english-tutor-data/
+├── users.json              ← index of all profiles + active user
+├── alice/
+│   ├── stats.json
+│   ├── spaced_repetition.json
+│   └── sessions/
+│       └── session_*.json
+├── bob/
+│   └── ...
+└── charlie/
+    └── ...
+```
+
+#### Identity Card (Web)
+The Web UI shows a prominent **identity card** at the top: a colored avatar circle with initials, the learner's name, their CEFR target, and focus areas. Tapping it opens a user picker where you can switch learners or create new ones. Switching users clears the chat and shows a personalized Emma greeting: *"Welcome back, Alice! 👋 You're working toward B2 level, focusing on speaking and listening."*
+
+#### User Commands (CLI)
+| Command | Description |
+|---------|-------------|
+| `/users` | List all learners on this device |
+| `/switch <name>` | Switch to a different learner profile |
+| `/profile` | View your learning profile (name, CEFR, focus, daily goal) |
+
+### 8. Face Recognition 👤 (optional)
+
+When a camera is available and the `face_recognition` library is installed, the tutor can **automatically recognize who's sitting at the device**.
+
+#### Registration
+During profile creation, the user is prompted: *"Set up face recognition? (so Emma knows it's you)"*. A single photo is captured, a 128-dimension face embedding is extracted, and stored in the profile. No raw images are saved — only the mathematical embedding.
+
+#### Auto-Recognition on Startup
+- **CLI**: Before showing the user list, the camera captures a frame. If a matching face embedding is found, Emma greets: *"👋 Recognized you, Alice! Welcome back!"*
+- **Web**: On page load, `/api/face/recognize` is called. If the face matches a registered user, the user picker is skipped entirely — the learner is signed in automatically.
+
+#### Graceful Degradation
+If the camera is unavailable or `face_recognition` isn't installed, the system falls back to the manual user selection screen. Everything works perfectly without it — face recognition is an enhancement, not a requirement.
+
+#### Technical Details
+- **Detection**: OpenCV Haar cascade classifier (`haarcascade_frontalface_default.xml`) — built into OpenCV, no extra models needed
+- **Embedding**: `face_recognition` library (dlib-based), 128-dimension Euclidean-distance comparison
+- **Tolerance**: 0.6 Euclidean distance (standard face_recognition default)
+- **Module**: `english_tutor/face_utils.py` — all functions gracefully return `None` when dependencies are missing
+
+```bash
+# Optional: install for auto face recognition
+pip install face-recognition
+```
+
 ---
 
 ## Commands
@@ -230,6 +299,9 @@ SM-2 algorithm (same as Anki) for vocabulary retention:
 | `/stats` | Learning statistics dashboard |
 | `/words` | Vocabulary list |
 | `/errors` | Error pattern analysis |
+| `/users` | List all learners on this device |
+| `/switch <name>` | Switch to a different learner profile |
+| `/profile` | View your learning profile |
 | `/save` | Save session |
 | `/quit` | Exit |
 

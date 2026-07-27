@@ -43,6 +43,14 @@ from english_tutor.tutor_prompt import (
     build_system_message,
     build_topic_suggestion,
 )
+from english_tutor.user_manager import UserManager, UserProfile
+from english_tutor.face_utils import (
+    is_camera_available,
+    capture_face_for_registration,
+    find_matching_user,
+    is_face_recognition_available,
+    face_image_to_base64,
+)
 
 load_dotenv()
 
@@ -58,12 +66,36 @@ app = FastAPI(title="English Tutor", version="2.0")
 client: LLMClient | None = None
 memory: ConversationMemory | None = None
 sr: SpacedRepetition | None = None
+um: UserManager | None = None
 
 
 def get_client() -> LLMClient:
     if client is None:
         raise HTTPException(500, "Server not initialized")
     return client
+
+
+def get_um() -> UserManager:
+    if um is None:
+        raise HTTPException(500, "Server not initialized")
+    return um
+
+
+def _init_per_user():
+    """(Re)create memory and SR for the current active user."""
+    global memory, sr
+    u = get_um()
+    profile = u.ensure_active_user()
+    memory = ConversationMemory(user_id=profile.user_id)
+    sr = SpacedRepetition(user_id=profile.user_id)
+    # Load or create a session
+    sessions = memory.list_sessions()
+    for s in sessions:
+        if s["message_count"] > 1:
+            memory.load_session(s["id"])
+            break
+    else:
+        memory.new_session()
 
 
 def get_memory() -> ConversationMemory:
@@ -82,7 +114,7 @@ def get_sr() -> SpacedRepetition:
 
 @app.on_event("startup")
 async def startup():
-    global client, memory, sr
+    global client, memory, sr, um
     api_key = os.environ.get("DEEPSEEK_API_KEY", "")
     env_path = Path(__file__).resolve().parent.parent / ".env"
     if env_path.exists():
@@ -93,17 +125,10 @@ async def startup():
         sys.exit(1)
 
     client = LLMClient(api_key=api_key)
-    memory = ConversationMemory()
-    sr = SpacedRepetition()
+    um = UserManager()
 
-    # Load or create a session
-    sessions = memory.list_sessions()
-    for s in sessions:
-        if s["message_count"] > 1:
-            memory.load_session(s["id"])
-            break
-    else:
-        memory.new_session()
+    # Initialize per-user memory/SR for the last active user
+    _init_per_user()
 
 
 # ── Static files ────────────────────────────────────────────────────
@@ -139,8 +164,12 @@ async def chat_stream(request: Request):
     if not user_message:
         raise HTTPException(400, "message required")
 
-    # Build messages
+    # Build messages, enhanced with current user context
     system_msg = build_system_message()
+    u = get_um()
+    if u.active_user:
+        extra = f"\n\n## Current Learner\n{u.active_user.prompt_context()}"
+        system_msg["content"] += extra
     messages = [system_msg]
 
     for msg in mem.get_context(max_messages=20):
@@ -199,6 +228,179 @@ async def speak(request: Request):
         raise HTTPException(500, "edge-tts not installed")
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+# ── User Management API ───────────────────────────────────────────
+
+@app.get("/api/users")
+async def list_users():
+    """List all registered learners."""
+    u = get_um()
+    users = u.list_users()
+    return JSONResponse({
+        "users": [
+            {
+                "user_id": p.user_id,
+                "name": p.name,
+                "target_cefr": p.target_cefr,
+                "focus_areas": p.focus_areas,
+                "daily_goal_minutes": p.daily_goal_minutes,
+                "is_active": u.active_user is not None and p.user_id == u.active_user.user_id,
+                "last_active": p.last_active[:10] if p.last_active else "",
+            }
+            for p in users
+        ]
+    })
+
+
+@app.get("/api/users/current")
+async def current_user():
+    """Get the currently active user profile."""
+    u = get_um()
+    profile = u.active_user
+    if not profile:
+        raise HTTPException(404, "No active user")
+    return JSONResponse({
+        "user_id": profile.user_id,
+        "name": profile.name,
+        "target_cefr": profile.target_cefr,
+        "focus_areas": profile.focus_areas,
+        "daily_goal_minutes": profile.daily_goal_minutes,
+        "created_at": profile.created_at[:10] if profile.created_at else "",
+        "last_active": profile.last_active[:10] if profile.last_active else "",
+    })
+
+
+@app.post("/api/users")
+async def create_user(request: Request):
+    """Create a new learner profile."""
+    u = get_um()
+    body = await request.json()
+    name = body.get("name", "").strip()
+    if not name:
+        raise HTTPException(400, "name required")
+
+    try:
+        profile = u.create_user(
+            name=name,
+            target_cefr=body.get("target_cefr", "B1"),
+            focus_areas=body.get("focus_areas", ["speaking", "reading"]),
+            daily_goal_minutes=body.get("daily_goal_minutes", 20),
+            face_embedding=body.get("face_embedding"),
+        )
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+    return JSONResponse({
+        "user_id": profile.user_id,
+        "name": profile.name,
+        "target_cefr": profile.target_cefr,
+        "focus_areas": profile.focus_areas,
+        "daily_goal_minutes": profile.daily_goal_minutes,
+    })
+
+
+@app.post("/api/users/switch")
+async def switch_user(request: Request):
+    """Switch to a different active user."""
+    u = get_um()
+    body = await request.json()
+    user_id = body.get("user_id", "").strip()
+    if not user_id:
+        raise HTTPException(400, "user_id required")
+
+    try:
+        profile = u.set_active_user(user_id)
+    except ValueError:
+        raise HTTPException(404, f"User '{user_id}' not found")
+
+    # Re-initialize per-user memory and SR
+    _init_per_user()
+
+    return JSONResponse({
+        "ok": True,
+        "user_id": profile.user_id,
+        "name": profile.name,
+        "target_cefr": profile.target_cefr,
+        "focus_areas": profile.focus_areas,
+        "daily_goal_minutes": profile.daily_goal_minutes,
+    })
+
+
+@app.put("/api/users/{user_id}")
+async def update_user(user_id: str, request: Request):
+    """Update a user profile."""
+    u = get_um()
+    body = await request.json()
+    allowed = {"name", "target_cefr", "focus_areas", "daily_goal_minutes"}
+    updates = {k: v for k, v in body.items() if k in allowed}
+    if not updates:
+        raise HTTPException(400, "No valid fields to update")
+    try:
+        profile = u.update_user(user_id, **updates)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    return JSONResponse({
+        "user_id": profile.user_id,
+        "name": profile.name,
+        "target_cefr": profile.target_cefr,
+        "focus_areas": profile.focus_areas,
+        "daily_goal_minutes": profile.daily_goal_minutes,
+    })
+
+
+# ── Face Recognition API ─────────────────────────────────────────
+
+@app.post("/api/face/capture")
+async def face_capture():
+    """Capture a face from camera and return embedding + base64 image."""
+    if not is_camera_available():
+        raise HTTPException(503, "Camera not available")
+
+    face_img, embedding = capture_face_for_registration(num_attempts=2)
+    if face_img is None:
+        raise HTTPException(404, "No face detected. Make sure you're facing the camera.")
+
+    result = {"detected": True}
+    if embedding:
+        result["embedding"] = embedding
+    try:
+        result["image_base64"] = face_image_to_base64(face_img)
+    except Exception:
+        pass
+    return JSONResponse(result)
+
+
+@app.post("/api/face/recognize")
+async def face_recognize():
+    """Try to recognize the current face and auto-switch user."""
+    u = get_um()
+    if not is_camera_available() or not is_face_recognition_available():
+        return JSONResponse({"recognized": False, "reason": "face_recognition not available"})
+
+    users = u.list_users()
+    known = [(p.user_id, p.face_embedding) for p in users if p.face_embedding]
+    if not known:
+        return JSONResponse({"recognized": False, "reason": "no registered faces"})
+
+    face_img, embedding = capture_face_for_registration(num_attempts=1)
+    if not embedding:
+        return JSONResponse({"recognized": False, "reason": "no face detected"})
+
+    match_id = find_matching_user(embedding, known)
+    if match_id:
+        profile = u.set_active_user(match_id)
+        _init_per_user()
+        return JSONResponse({
+            "recognized": True,
+            "user_id": profile.user_id,
+            "name": profile.name,
+            "target_cefr": profile.target_cefr,
+            "focus_areas": profile.focus_areas,
+            "daily_goal_minutes": profile.daily_goal_minutes,
+        })
+
+    return JSONResponse({"recognized": False, "reason": "face not matched"})
 
 
 # ── Immersion API ───────────────────────────────────────────────────

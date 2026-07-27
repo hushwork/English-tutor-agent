@@ -16,11 +16,29 @@ DEFAULT_STORAGE_DIR = os.environ.get(
 
 
 class ConversationMemory:
-    """Manages conversation history and user stats, persisted as JSON files."""
+    """Manages conversation history and user stats, persisted as JSON files.
 
-    def __init__(self, storage_dir: str | Path | None = None):
+    When user_id is provided, data is stored under:
+        .english-tutor-data/{user_id}/stats.json
+        .english-tutor-data/{user_id}/sessions/session_*.json
+
+    Without user_id, falls back to legacy flat layout for backward compat.
+    """
+
+    def __init__(self, storage_dir: str | Path | None = None,
+                 user_id: str | None = None):
+        self.user_id = user_id
         self.storage_dir = Path(storage_dir or DEFAULT_STORAGE_DIR)
-        self.storage_dir.mkdir(parents=True, exist_ok=True)
+
+        if user_id:
+            # Per-user layout: data/{user_id}/...
+            self._data_dir = self.storage_dir / user_id
+        else:
+            # Legacy global layout: data/...
+            self._data_dir = self.storage_dir
+        self._data_dir.mkdir(parents=True, exist_ok=True)
+        self._sessions_dir = self._data_dir / "sessions"
+        self._sessions_dir.mkdir(parents=True, exist_ok=True)
 
         # Current session
         self.session_id: str = ""
@@ -80,7 +98,7 @@ class ConversationMemory:
     def list_sessions(self) -> list[dict]:
         """List all past sessions sorted by date (newest first)."""
         sessions = []
-        for f in self.storage_dir.glob("session_*.json"):
+        for f in self._sessions_dir.glob("session_*.json"):
             try:
                 data = json.loads(f.read_text())
                 sessions.append({
@@ -96,7 +114,7 @@ class ConversationMemory:
 
     def load_session(self, session_id: str) -> bool:
         """Load a specific session from disk. Returns True if found."""
-        path = self.storage_dir / f"session_{session_id}.json"
+        path = self._sessions_dir / f"session_{session_id}.json"
         if not path.exists():
             return False
         try:
@@ -113,7 +131,7 @@ class ConversationMemory:
         """Auto-save the current session."""
         if not self.session_id:
             return
-        path = self.storage_dir / f"session_{self.session_id}.json"
+        path = self._sessions_dir / f"session_{self.session_id}.json"
         data = {
             "session_id": self.session_id,
             "created_at": self.messages[0]["timestamp"] if self.messages else "",
@@ -128,7 +146,7 @@ class ConversationMemory:
 
     def _load_stats(self) -> dict:
         """Load user stats from disk."""
-        path = self.storage_dir / "stats.json"
+        path = self._data_dir / "stats.json"
         if path.exists():
             try:
                 return json.loads(path.read_text())
@@ -148,7 +166,7 @@ class ConversationMemory:
         self.stats["total_sessions"] = len(self.list_sessions())
         self.stats["total_messages"] = sum(s["message_count"] for s in self.list_sessions())
         self.stats["last_session_date"] = datetime.now(timezone.utc).isoformat()
-        path = self.storage_dir / "stats.json"
+        path = self._data_dir / "stats.json"
         path.write_text(json.dumps(self.stats, ensure_ascii=False, indent=2))
 
     def record_error(self, error_type: str, example: str):

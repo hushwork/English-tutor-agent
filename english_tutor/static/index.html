@@ -42,6 +42,67 @@
   header h1 span { color: var(--accent) }
   header .sub { font-size: 0.7rem; color: var(--dim); margin-top: 2px }
 
+  /* ── Identity card ── */
+  #identity-card {
+    display: flex; align-items: center; gap: 10px; padding: 10px 16px;
+    background: var(--surface); border-bottom: 1px solid var(--surface2);
+    flex-shrink: 0; cursor: pointer; transition: background 0.2s;
+  }
+  #identity-card:active { background: var(--surface2) }
+  #id-avatar {
+    width: 40px; height: 40px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 1rem; color: #fff; flex-shrink: 0;
+  }
+  #id-info { flex: 1; min-width: 0 }
+  #id-name { font-weight: 600; font-size: 0.9rem; color: var(--text) }
+  #id-goal { font-size: 0.7rem; color: var(--dim); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+  #id-switch-hint { font-size: 0.65rem; color: var(--dim); opacity: 0.5; flex-shrink: 0 }
+  /* Switch animation */
+  @keyframes fadeSlideIn {
+    from { opacity: 0; transform: translateY(-8px) }
+    to { opacity: 1; transform: translateY(0) }
+  }
+  .switch-anim { animation: fadeSlideIn 0.35s ease-out }
+  /* User picker modal */
+  #user-picker-modal .user-pick-row {
+    display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+    border-radius: var(--radius); cursor: pointer; transition: background 0.15s;
+    border: 1px solid transparent;
+  }
+  #user-picker-modal .user-pick-row:hover, #user-picker-modal .user-pick-row:active { background: var(--surface2) }
+  #user-picker-modal .user-pick-row.active { border-color: var(--accent); background: rgba(59,204,142,0.1) }
+  .user-pick-avatar {
+    width: 32px; height: 32px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 0.8rem; color: #fff; flex-shrink: 0;
+  }
+  .user-pick-name { font-weight: 600; font-size: 0.88rem }
+  .user-pick-goal { font-size: 0.7rem; color: var(--dim) }
+  .user-pick-new {
+    text-align: center; padding: 12px; color: var(--accent);
+    font-weight: 600; border: 1px dashed var(--surface2); border-radius: var(--radius);
+    cursor: pointer; margin-top: 8px; font-size: 0.85rem;
+  }
+  /* Profile modal */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+    z-index: 100; justify-content: center; align-items: center;
+  }
+  .modal-overlay.show { display: flex }
+  .modal {
+    background: var(--surface); border-radius: var(--radius); padding: 20px;
+    width: 90%; max-width: 400px; border: 1px solid var(--surface2);
+  }
+  .modal h3 { font-size: 1rem; margin-bottom: 12px; color: var(--accent) }
+  .modal label { display: block; font-size: 0.78rem; color: var(--dim); margin: 8px 0 4px }
+  .modal input, .modal select {
+    width: 100%; background: var(--surface2); color: var(--text);
+    border: 1px solid var(--surface2); padding: 8px 12px; border-radius: var(--radius);
+    font-size: 0.85rem; outline: none;
+  }
+  .modal .btn-row { display: flex; gap: 8px; margin-top: 14px; justify-content: flex-end }
+
   /* ── Views ── */
   .view { display: none; flex: 1; flex-direction: column; overflow: hidden; height: 100% }
   .view.active { display: flex }
@@ -172,6 +233,59 @@
   <h1>🌊 English <span>Tutor</span></h1>
   <div class="sub">Phase-1 Pretraining Input</div>
 </header>
+
+<!-- Identity card -->
+<div id="identity-card" onclick="showUserPicker()">
+  <div id="id-avatar">?</div>
+  <div id="id-info">
+    <div id="id-name">Loading...</div>
+    <div id="id-goal"></div>
+  </div>
+  <div id="id-switch-hint">▾ Switch</div>
+</div>
+
+<!-- User picker modal -->
+<div class="modal-overlay" id="user-picker-modal">
+  <div class="modal">
+    <h3>👥 Who's Learning?</h3>
+    <div id="user-picker-list"></div>
+    <div class="user-pick-new" onclick="showNewUserModal(); hideUserPicker()">+ Create New Learner</div>
+    <div class="btn-row" style="margin-top:12px">
+      <button class="btn small ghost" onclick="hideUserPicker()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- New user modal -->
+<div class="modal-overlay" id="new-user-modal">
+  <div class="modal">
+    <h3>🎓 New Learner</h3>
+    <label>Name</label>
+    <input id="nu-name" type="text" placeholder="Your name">
+    <label>Target CEFR Level</label>
+    <select id="nu-cefr">
+      <option value="A1">A1 — Beginner</option>
+      <option value="A2">A2 — Elementary</option>
+      <option value="B1" selected>B1 — Intermediate</option>
+      <option value="B2">B2 — Upper Intermediate</option>
+      <option value="C1">C1 — Advanced</option>
+      <option value="C2">C2 — Mastery</option>
+    </select>
+    <label>Focus Areas</label>
+    <input id="nu-focus" type="text" placeholder="speaking, reading" value="speaking, reading">
+    <label>Daily Goal (minutes)</label>
+    <input id="nu-goal" type="number" min="5" max="120" value="20">
+    <label>Face Recognition</label>
+    <div style="display:flex;align-items:center;gap:10px">
+      <button class="btn small" onclick="captureFace()" id="nu-face-btn" type="button">📷 Capture Face</button>
+      <span id="nu-face-status" style="font-size:0.75rem;color:var(--dim)"></span>
+    </div>
+    <div class="btn-row">
+      <button class="btn small ghost" onclick="hideNewUserModal()">Cancel</button>
+      <button class="btn small accent" onclick="createUser()">Create</button>
+    </div>
+  </div>
+</div>
 
 <!-- Chat View -->
 <div id="chat-view" class="view active">
@@ -508,10 +622,204 @@ function hideLoading() {
   // panel will be overwritten by updatePassUI
 }
 
+// ── User Management ──
+const AVATAR_COLORS = ['#4da6ff','#3bcc8e','#c084fc','#f0c040','#e0556a','#ff8c42','#42d9c8'];
+let currentUser = null;
+
+function avatarColor(name) {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+}
+
+function initials(name) {
+  return name.split(/\s+/).map(w => w[0]?.toUpperCase() || '').slice(0, 2).join('');
+}
+
+function renderIdentityCard(user) {
+  currentUser = user;
+  document.getElementById('id-avatar').style.background = avatarColor(user.name);
+  document.getElementById('id-avatar').textContent = initials(user.name);
+  document.getElementById('id-name').textContent = user.name;
+  const focus = (user.focus_areas || []).slice(0,3).join(', ');
+  document.getElementById('id-goal').textContent = `Target: ${user.target_cefr} · ${focus || 'all'}`;
+  // Animate
+  const card = document.getElementById('identity-card');
+  card.classList.remove('switch-anim');
+  void card.offsetWidth; // reflow
+  card.classList.add('switch-anim');
+}
+
+async function loadUsers() {
+  try {
+    const resp = await fetch('/api/users');
+    const data = await resp.json();
+    // Show active user in identity card
+    const active = data.users.find(u => u.is_active);
+    if (active) {
+      renderIdentityCard(active);
+    } else if (data.users.length > 0) {
+      // Auto-activate first user
+      await switchUser(data.users[0].user_id);
+      return;
+    }
+    // Build user picker list
+    buildUserPickerList(data.users);
+    // If no users, auto-show new user modal
+    if (data.users.length === 0) showNewUserModal();
+  } catch(e) {
+    console.error('Failed to load users:', e);
+  }
+}
+
+function buildUserPickerList(users) {
+  const list = document.getElementById('user-picker-list');
+  list.innerHTML = '';
+  users.forEach(u => {
+    const row = document.createElement('div');
+    row.className = 'user-pick-row' + (u.is_active ? ' active' : '');
+    row.onclick = () => { hideUserPicker(); switchUser(u.user_id); };
+    row.innerHTML = `
+      <div class="user-pick-avatar" style="background:${avatarColor(u.name)}">${initials(u.name)}</div>
+      <div>
+        <div class="user-pick-name">${escapeHtml(u.name)} ${u.is_active ? '✅' : ''}</div>
+        <div class="user-pick-goal">${u.target_cefr} · ${(u.focus_areas||[]).slice(0,2).join(', ')}</div>
+      </div>
+    `;
+    list.appendChild(row);
+  });
+}
+
+function showUserPicker() {
+  // Refresh list before showing
+  fetch('/api/users').then(r => r.json()).then(data => {
+    buildUserPickerList(data.users);
+    document.getElementById('user-picker-modal').classList.add('show');
+  }).catch(() => {
+    document.getElementById('user-picker-modal').classList.add('show');
+  });
+}
+
+function hideUserPicker() {
+  document.getElementById('user-picker-modal').classList.remove('show');
+}
+
+async function switchUser(userId) {
+  try {
+    await fetch('/api/users/switch', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({user_id: userId}),
+    });
+    // Reload to update identity card
+    await loadUsers();
+    // Clear chat + personalized greeting
+    const msgs = document.getElementById('chat-messages');
+    msgs.innerHTML = '';
+    const name = currentUser?.name || 'friend';
+    const cefr = currentUser?.target_cefr || 'B1';
+    const focus = (currentUser?.focus_areas || ['speaking']).slice(0,2).join(' and ');
+    appendMsg('assistant',
+      `Welcome back, **${name}**! 👋 I'm Emma, your English tutor.\n\n` +
+      `You're working toward **${cefr}** level, focusing on **${focus}**. ` +
+      `Ready to practice? What would you like to talk about today?`
+    );
+  } catch(e) {
+    console.error('Failed to switch user:', e);
+  }
+}
+
+function showNewUserModal() {
+  document.getElementById('new-user-modal').classList.add('show');
+}
+
+function hideNewUserModal() {
+  document.getElementById('new-user-modal').classList.remove('show');
+}
+
+let faceEmbedding = null;
+
+async function captureFace() {
+  const btn = document.getElementById('nu-face-btn');
+  const status = document.getElementById('nu-face-status');
+  btn.disabled = true;
+  btn.textContent = '📷 Capturing...';
+  status.textContent = '';
+  try {
+    const resp = await fetch('/api/face/capture', {method:'POST'});
+    if (!resp.ok) {
+      const err = await resp.json();
+      status.innerHTML = '<span style="color:var(--danger)">✗ ' + (err.detail || 'Failed') + '</span>';
+    } else {
+      const data = await resp.json();
+      if (data.embedding) {
+        faceEmbedding = data.embedding;
+        status.innerHTML = '<span style="color:var(--accent)">✓ Face registered!</span>';
+      } else {
+        status.innerHTML = '<span style="color:var(--warn)">Face detected but library missing. Install face_recognition for auto-login.</span>';
+      }
+    }
+  } catch(e) {
+    status.innerHTML = '<span style="color:var(--danger)">Camera not available</span>';
+  }
+  btn.disabled = false;
+  btn.textContent = '📷 Capture Face';
+}
+
+async function createUser() {
+  const name = document.getElementById('nu-name').value.trim();
+  if (!name) return alert('Please enter a name.');
+  const cefr = document.getElementById('nu-cefr').value;
+  const focus = document.getElementById('nu-focus').value.split(',').map(s => s.trim()).filter(Boolean);
+  const goal = parseInt(document.getElementById('nu-goal').value) || 20;
+
+  try {
+    const resp = await fetch('/api/users', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name, target_cefr: cefr, focus_areas: focus, daily_goal_minutes: goal, face_embedding: faceEmbedding}),
+    });
+    if (!resp.ok) {
+      const err = await resp.json();
+      return alert('Error: ' + (err.detail || 'Failed to create user'));
+    }
+    const user = await resp.json();
+    // Switch to the new user
+    await switchUser(user.user_id);
+    hideNewUserModal();
+    // Clear form
+    document.getElementById('nu-name').value = '';
+    faceEmbedding = null;
+    document.getElementById('nu-face-status').textContent = '';
+  } catch(e) {
+    alert('Failed to create user. Check connection.');
+    console.error(e);
+  }
+}
+
 // ── Init ──
-document.addEventListener('DOMContentLoaded', () => {
-  // Initial greeting in chat
-  appendMsg('assistant', "Hi! I'm Emma, your English tutor. 😊 How are you today? Tap 🌊 Immerse to start pretraining, or just chat with me here!");
+document.addEventListener('DOMContentLoaded', async () => {
+  // Try face recognition first
+  try {
+    const resp = await fetch('/api/face/recognize', {method:'POST'});
+    const data = await resp.json();
+    if (data.recognized) {
+      // Face recognized! Load users to show identity card
+      await loadUsers();
+      // Show personalized greeting
+      const msgs = document.getElementById('chat-messages');
+      msgs.innerHTML = '';
+      const focus = (data.focus_areas || ['speaking']).slice(0,2).join(' and ');
+      appendMsg('assistant',
+        `👋 Recognized you, **${data.name}**! Welcome back!\n\n` +
+        `You're working toward **${data.target_cefr}** level, focusing on **${focus}**. ` +
+        `Ready to practice? What would you like to talk about today?`
+      );
+      return;
+    }
+  } catch(e) { /* ignore, fall through to normal load */ }
+  // Normal load
+  loadUsers();
 });
 </script>
 

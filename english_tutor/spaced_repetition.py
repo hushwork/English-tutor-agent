@@ -22,15 +22,26 @@ EASE_FACTOR_MIN = 1.3
 
 
 class SpacedRepetition:
-    """Manages spaced repetition scheduling for vocabulary items."""
+    """Manages spaced repetition scheduling for vocabulary items.
 
-    def __init__(self, storage_dir: str | Path | None = None):
+    When user_id is provided, data is stored under:
+        .english-tutor-data/{user_id}/spaced_repetition.json
+    Without user_id, falls back to legacy flat layout.
+    """
+
+    def __init__(self, storage_dir: str | Path | None = None,
+                 user_id: str | None = None):
         base = os.environ.get(
             "ENGLISH_TUTOR_DATA_DIR",
             str(Path(__file__).resolve().parent.parent / ".english-tutor-data"),
         )
         self.storage_dir = Path(storage_dir or base)
-        self.storage_dir.mkdir(parents=True, exist_ok=True)
+        self.user_id = user_id
+        if user_id:
+            self._data_dir = self.storage_dir / user_id
+        else:
+            self._data_dir = self.storage_dir
+        self._data_dir.mkdir(parents=True, exist_ok=True)
         self.cards: dict[str, Card] = {}  # word -> Card
         self._load()
 
@@ -90,6 +101,10 @@ class SpacedRepetition:
         cards.sort(key=lambda c: c.ease_factor)
         return cards
 
+    def find_card(self, word: str) -> "Card | None":
+        """Find a card by word (case-insensitive)."""
+        return self.cards.get(word.lower().strip())
+
     def get_stats(self) -> dict:
         """Get summary statistics."""
         cards = list(self.cards.values())
@@ -110,7 +125,7 @@ class SpacedRepetition:
     # ── Persistence ──────────────────────────────────────────────
 
     def _load(self):
-        path = self.storage_dir / "spaced_repetition.json"
+        path = self._data_dir / "spaced_repetition.json"
         if path.exists():
             try:
                 data = json.loads(path.read_text())
@@ -121,7 +136,7 @@ class SpacedRepetition:
                 pass
 
     def _save(self):
-        path = self.storage_dir / "spaced_repetition.json"
+        path = self._data_dir / "spaced_repetition.json"
         data = {
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "card_count": len(self.cards),

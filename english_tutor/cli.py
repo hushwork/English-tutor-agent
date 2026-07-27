@@ -73,6 +73,7 @@ COMMANDS = {
     "/users": "List all learners on this device",
     "/switch <name>": "Switch to a different learner profile",
     "/profile": "View or edit your learning profile",
+    "/report": "View today's learning report (parent summary)",
     "/save": "Save and exit",
     "/quit": "Exit the tutor",
 }
@@ -541,6 +542,22 @@ async def chat_loop(client: LLMClient, memory: ConversationMemory, sr: SpacedRep
                 continue
             elif cmd == "/profile":
                 console.print("[yellow]Type /quit to return to the user selection menu.[/yellow]")
+                continue
+            elif cmd == "/report":
+                # Generate parent report via LearningTracker
+                from english_tutor.learning_tracker import LearningTracker
+                t = LearningTracker(
+                    user_id=user_profile.user_id if user_profile else "unknown",
+                    user_name=user_profile.name if user_profile else "Unknown",
+                    age_group=user_profile.age_group if user_profile else "elementary",
+                )
+                report = t.generate_parent_report()
+                console.print(Panel(
+                    Markdown(report),
+                    title="📊 Learning Report",
+                    border_style="cyan",
+                    width=WIDTH,
+                ))
                 continue
 
             elif cmd == "/read":

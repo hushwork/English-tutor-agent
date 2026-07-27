@@ -69,13 +69,17 @@ class DecisionEngine:
 
     def __init__(
         self,
+        user_id: str | None = None,
+        age_group: str = "elementary",
         max_interventions_per_hour: int = 5,
-        min_interval_between_interventions: float = 60.0,  # seconds
-        focus_protect_threshold: float = 180.0,   # 3 min before considering intervention
-        idle_engage_threshold: float = 300.0,      # 5 min idle before proactive check
-        bedtime_start: int = 20,                   # 8 PM
-        bedtime_end: int = 7,                      # 7 AM
+        min_interval_between_interventions: float = 60.0,
+        focus_protect_threshold: float = 180.0,
+        idle_engage_threshold: float = 300.0,
+        bedtime_start: int = 20,
+        bedtime_end: int = 7,
     ):
+        self.user_id = user_id
+        self.age_group = age_group  # preschool, elementary, middle
         self.max_interventions_per_hour = max_interventions_per_hour
         self.min_interval = min_interval_between_interventions
         self.focus_protect_threshold = focus_protect_threshold
@@ -124,6 +128,7 @@ class DecisionEngine:
                 state=TutorState.ENGAGING,
                 priority=0,
                 reason="child_called",
+                age_group=self.age_group,
             )
 
         # Priority 1: Child is showing something
@@ -297,6 +302,7 @@ class InterventionDecision:
     reason: str
     objects: list[str] = field(default_factory=list)
     suggested_role: str = ""  # "tutor", "playmate", "narrator"
+    age_group: str = "elementary"  # preschool, elementary, middle
 
     def __post_init__(self):
         if self.state == TutorState.ENGAGING:

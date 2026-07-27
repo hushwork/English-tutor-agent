@@ -19,6 +19,12 @@ DEFAULT_REPORT_DIR = os.environ.get(
     str(Path(__file__).resolve().parent.parent / ".camera-tutor-data"),
 )
 
+# Per-user reports go under .english-tutor-data/{user_id}/reports/
+ENGLISH_TUTOR_DATA_DIR = os.environ.get(
+    "ENGLISH_TUTOR_DATA_DIR",
+    str(Path(__file__).resolve().parent.parent / ".english-tutor-data"),
+)
+
 
 @dataclass
 class DailyReport:
@@ -45,8 +51,14 @@ class ParentReportEngine:
     human-readable summaries for the parent dashboard.
     """
 
-    def __init__(self, storage_dir: str | Path | None = None):
-        self.storage_dir = Path(storage_dir or DEFAULT_REPORT_DIR)
+    def __init__(self, storage_dir: str | Path | None = None,
+                 user_id: str | None = None):
+        self.user_id = user_id
+        if user_id:
+            # Per-user reports: .english-tutor-data/{user_id}/reports/
+            self.storage_dir = Path(ENGLISH_TUTOR_DATA_DIR) / user_id / "reports"
+        else:
+            self.storage_dir = Path(storage_dir or DEFAULT_REPORT_DIR)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
 
         # Current day's running data

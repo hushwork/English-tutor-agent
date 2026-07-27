@@ -30,6 +30,38 @@ from typing import Any
 
 VALID_CEFR = ("A1", "A2", "B1", "B2", "C1", "C2")
 VALID_FOCUS = ("speaking", "reading", "listening", "writing", "vocabulary", "grammar")
+VALID_AGE_GROUPS = ("preschool", "elementary", "middle")
+
+# Predefined learning targets per age group
+AGE_GROUP_CONFIGS = {
+    "preschool": {
+        "label": "Preschool (3-6)",
+        "default_cefr": "A1",
+        "default_focus": ["listening", "speaking"],
+        "default_daily_minutes": 10,
+        "target_vocabulary": 200,
+        "description": "Play-based English exposure. No forced output. Songs, stories, simple commands.",
+        "dialogue_style": "warm, playful, use simple 3-5 word sentences, lots of repetition and praise",
+    },
+    "elementary": {
+        "label": "Elementary (7-12)",
+        "default_cefr": "A2",
+        "default_focus": ["speaking", "reading", "listening"],
+        "default_daily_minutes": 20,
+        "target_vocabulary": 500,
+        "description": "Interest-driven conversation. Picture books, simple dialogue, basic phonics.",
+        "dialogue_style": "encouraging, use 5-8 word sentences, ask open questions, gently correct errors",
+    },
+    "middle": {
+        "label": "Middle School (13-15)",
+        "default_cefr": "B1",
+        "default_focus": ["speaking", "reading", "writing", "grammar"],
+        "default_daily_minutes": 30,
+        "target_vocabulary": 1500,
+        "description": "Academic + real-world English. Discussions, debates, reading comprehension.",
+        "dialogue_style": "respectful peer-like tone, use natural sentences, discuss abstract topics, subtle error correction",
+    },
+}
 DEFAULT_STORAGE_DIR = os.environ.get(
     "ENGLISH_TUTOR_DATA_DIR",
     str(Path(__file__).resolve().parent.parent / ".english-tutor-data"),
@@ -44,10 +76,11 @@ class UserProfile:
 
     user_id: str  # URL-safe slug, e.g. "alice"
     name: str  # Display name, e.g. "Alice"
+    age_group: str = "elementary"  # preschool, elementary, middle
     target_cefr: str = "B1"  # A1-C2
     focus_areas: list[str] = field(default_factory=lambda: ["speaking", "reading"])
     daily_goal_minutes: int = 20
-    face_embedding: list[float] | None = None  # optional, for camera recognition
+    face_embedding: list[float] | None = None
     created_at: str = ""
     last_active: str = ""
 
@@ -64,11 +97,15 @@ class UserProfile:
             f for f in self.focus_areas if f in VALID_FOCUS
         ] or ["speaking"]
         self.daily_goal_minutes = max(5, min(120, self.daily_goal_minutes))
+        # Normalize age_group
+        if self.age_group not in VALID_AGE_GROUPS:
+            self.age_group = "elementary"
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "user_id": self.user_id,
             "name": self.name,
+            "age_group": self.age_group,
             "target_cefr": self.target_cefr,
             "focus_areas": self.focus_areas,
             "daily_goal_minutes": self.daily_goal_minutes,
@@ -92,21 +129,34 @@ class UserProfile:
     def goal_summary(self) -> str:
         """One-line goal summary for display."""
         focus_str = ", ".join(self.focus_areas)
+        age_label = AGE_GROUP_CONFIGS.get(self.age_group, {}).get("label", self.age_group)
         return (
+            f"{age_label} | "
             f"Target: {self.target_cefr} | "
             f"Focus: {focus_str} | "
-            f"Daily goal: {self.daily_goal_minutes} min"
+            f"Daily: {self.daily_goal_minutes} min"
         )
 
     def prompt_context(self) -> str:
         """A paragraph to inject into the tutor system prompt."""
         focus = ", ".join(self.focus_areas)
+        config = AGE_GROUP_CONFIGS.get(self.age_group, {})
+        age_label = config.get("label", self.age_group)
+        dialogue_style = config.get("dialogue_style", "encouraging")
+        target_vocab = config.get("target_vocabulary", 500)
         return (
             f"The student's name is {self.name}. "
-            f"Their target CEFR level is {self.target_cefr}. "
-            f"They want to focus on: {focus}. "
-            f"Their daily learning goal is {self.daily_goal_minutes} minutes."
+            f"Age group: {age_label}. "
+            f"Target CEFR: {self.target_cefr}. "
+            f"Target vocabulary: {target_vocab} words. "
+            f"Focus areas: {focus}. "
+            f"Dialogue style: {dialogue_style}. "
+            f"Daily goal: {self.daily_goal_minutes} minutes."
         )
+
+    def age_config(self) -> dict:
+        """Return the age-group configuration dict."""
+        return AGE_GROUP_CONFIGS.get(self.age_group, AGE_GROUP_CONFIGS["elementary"])
 
 
 # ── UserManager ─────────────────────────────────────────────────────
@@ -126,6 +176,7 @@ class UserManager:
     def create_user(
         self,
         name: str,
+        age_group: str = "elementary",
         target_cefr: str = "B1",
         focus_areas: list[str] | None = None,
         daily_goal_minutes: int = 20,
@@ -136,12 +187,19 @@ class UserManager:
         if user_id in self._users:
             raise ValueError(f"User '{name}' already exists (id: {user_id})")
 
+        # Apply age-group defaults
+        config = AGE_GROUP_CONFIGS.get(age_group, AGE_GROUP_CONFIGS["elementary"])
+        resolved_cefr = target_cefr if target_cefr != "B1" else config["default_cefr"]
+        resolved_focus = focus_areas if focus_areas else config["default_focus"]
+        resolved_goal = daily_goal_minutes if daily_goal_minutes != 20 else config["default_daily_minutes"]
+
         profile = UserProfile(
             user_id=user_id,
             name=name,
-            target_cefr=target_cefr,
-            focus_areas=focus_areas or ["speaking", "reading"],
-            daily_goal_minutes=daily_goal_minutes,
+            age_group=age_group,
+            target_cefr=resolved_cefr,
+            focus_areas=resolved_focus,
+            daily_goal_minutes=resolved_goal,
             face_embedding=face_embedding,
         )
         self._users[user_id] = profile

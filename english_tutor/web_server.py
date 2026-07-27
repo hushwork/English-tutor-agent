@@ -51,6 +51,7 @@ from english_tutor.face_utils import (
     is_face_recognition_available,
     face_image_to_base64,
 )
+from english_tutor.learning_tracker import LearningTracker
 
 load_dotenv()
 

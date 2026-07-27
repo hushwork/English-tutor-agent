@@ -142,6 +142,7 @@ run.py
        ├─ ConversationMemory ──► .english-tutor-data/{user_id}/sessions/ + stats.json
        ├─ SpacedRepetition ──► .english-tutor-data/{user_id}/spaced_repetition.json (SM-2)
        ├─ face_utils ──► OpenCV Haar cascade + face_recognition embeddings (optional)
+       ├─ LearningTracker ──► .english-tutor-data/{user_id}/tracking/ (vocab+grammar+interest)
        │
        └─ chat_loop()  ← the REPL
             ├─ /chat    → Default: streaming conversation with Emma
@@ -157,6 +158,7 @@ run.py
             ├─ /users   → UserManager.list_users()
             ├─ /switch  → UserManager.set_active_user()
             ├─ /profile → UserManager.active_user
+            ├─ /report  → LearningTracker.generate_parent_report()
             └─ /topic   → tutor_prompt.build_topic_suggestion()
 ```
 
@@ -173,6 +175,7 @@ run.py
 | `memory.py` | Session persistence + stats + error tracking | Infrastructure |
 | `user_manager.py` | Multi-user profiles, learning goals, face data | Infrastructure |
 | `face_utils.py` | Face detection + recognition (OpenCV + optional dlib) | Infrastructure |
+| `learning_tracker.py` | Silent vocab/grammar/interest tracker + parent reports | Infrastructure |
 | `web_server.py` | FastAPI web server + REST API + mobile SPA | Delivery |
 | `static/index.html` | Mobile-first single-page web application | Delivery |
 
@@ -279,6 +282,63 @@ If the camera is unavailable or `face_recognition` isn't installed, the system f
 # Optional: install for auto face recognition
 pip install face-recognition
 ```
+
+### 9. Age Groups & Learning Targets 🎯
+
+Every learner is assigned an **age group** that determines the depth, vocabulary targets, and dialogue style of their English interactions.
+
+| Age Group | Range | CEFR | Target Vocab | Daily Goal | Dialogue Style |
+|-----------|-------|------|-------------|------------|---------------|
+| **Preschool** | 3–6 | A1 | 200 words | 10 min | Warm, playful, 3-5 word sentences, lots of repetition and praise |
+| **Elementary** | 7–12 | A2 | 500 words | 20 min | Encouraging, 5-8 word sentences, open questions, gentle error correction |
+| **Middle School** | 13–15 | B1 | 1500 words | 30 min | Peer-like tone, natural sentences, abstract topics, subtle correction |
+
+When creating a new learner, selecting their age group auto-sets their CEFR target, focus areas, daily goal, and Emma's dialogue style. **Module**: `english_tutor/user_manager.py` → `AGE_GROUP_CONFIGS`
+
+### 10. Interest-Driven Learning (Show & Tell) 🎨
+
+The core philosophy: **children learn best when they don't feel like they're learning.** Instead of a fixed curriculum, Emma responds to whatever the child brings — a picture book, a drawing, a toy.
+
+```
+Child holds up a dinosaur drawing to the camera
+    ↓
+Vision LLM identifies: "dinosaur, crayon, child smiling"
+    ↓
+Decision Engine: Priority 1 "child_showing_object" → ENGAGING
+    ↓
+Emma (age-adapted): "Oh wow, you drew a dinosaur! Is it a T-Rex?
+                     Look at those big teeth! What's its name?"
+    ↓
+Behind the scenes: LearningTracker logs [dinosaur, big, sharp, teeth]
+                   as vocabulary exposed in context
+```
+
+**Decision priority system**: child calling Emma (P0) > showing object (P1) > holding book (P2) > idle/bored (P3) > new objects (P4) > child spoke (P5) > deep focus protection (P99 — stay silent). Design principle: *"宁可错过10次教学机会，也不打断1次深度专注"*
+
+### 11. Silent Learning Tracker & Parent Reports 📊
+
+Every interaction is silently logged. Parents get clear progress reports without the child ever feeling tested.
+
+**What gets tracked**: vocabulary exposure, grammar patterns, interest profile, emotional curve, coverage gap detection.
+
+**Vocabulary coverage**: each age group has seed vocabulary (200/500/1500 words). The tracker calculates coverage % and identifies gaps — words Emma should introduce naturally in future conversations.
+
+**Parent report** (`/report` command, Chinese-language):
+
+```
+## 📊 Alice 的今日学习报告
+### 📈 今日数据
+- 互动次数: 5 次 | Emma 输入: 28 句 | 孩子输出: 7 次 | 时长: 12.3 分钟
+### 📚 词汇进度
+- 今日新接触: dinosaur, castle, brave, knight, dragon
+- 累计: 89 / 500 (17.8%) | 建议明天引入: butterfly, island, rainbow
+### 🌟 亮点时刻
+- Child spoke English 3x during show and tell
+### 💡 明天建议
+- 推荐话题: dinosaur, castle | 引入词汇: butterfly, island, rainbow
+```
+
+**Module**: `english_tutor/learning_tracker.py`
 
 ---
 

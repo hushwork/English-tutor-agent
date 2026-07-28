@@ -75,7 +75,7 @@ print(f"   Mic: device {mic_index}")
 print(f"   Model: {MODEL}")
 
 # 启动摄像头（1 fps，场景变化时才上传）
-camera = CameraPipeline(camera_id=0, fps=1, resolution=(640, 480),
+camera = CameraPipeline(camera_id=0, fps=1, resolution=(224, 224),
                         scene_change_threshold=0.40, key_frame_min_interval=1.0)
 try:
     camera.start()
@@ -137,7 +137,7 @@ def on_open(ws):
                 try:
                     frame = camera.get_latest_frame()
                     if frame and (last_frame is None or frame.is_key_frame):
-                        jpg = cv2.imencode('.jpg', frame.image, [cv2.IMWRITE_JPEG_QUALITY, 60])[1]
+                        jpg = cv2.imencode('.jpg', frame.image, [cv2.IMWRITE_JPEG_QUALITY, 50])[1]
                         b64 = base64.b64encode(jpg).decode()
                         ws.send(json.dumps({
                             "type": "input_image_buffer.append",

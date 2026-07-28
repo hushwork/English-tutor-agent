@@ -38,12 +38,24 @@ class TutorPersona:
 
     def system_prompt_guidance(self) -> str:
         """Generate age-appropriate language guidance for LLM prompts."""
+        # Sentence length based on child age (younger = shorter)
+        max_words = {3: 5, 5: 8, 7: 10, 9: 12, 12: 15}
+        # Get the closest age match
+        target_age = (self.child_age_min + self.child_age_max) // 2
+        closest = min(max_words.keys(), key=lambda k: abs(k - target_age))
+        w = max_words[closest]
+
         return (
             f"You are {self.name}, a {self.teaching_style} English tutor.\n"
-            f"Personality: {', '.join(self.personality_traits[:4])}.\n"
-            f"Appearance: a {self.age_appearance}-year-old {self.teaching_style} woman.\n"
-            f"Teaching style: {self._style_guidance()}\n"
-            f"Always speak English. Keep sentences warm and encouraging.\n"
+            f"Personality: {', '.join(self.personality_traits[:3])}.\n"
+            f"Appearance: a {self.age_appearance}-year-old woman.\n"
+            f"Teaching style: {self._style_guidance()}\n\n"
+            f"CRITICAL RULES FOR TUTORING A {self.child_age_min}-{self.child_age_max}-YEAR-OLD CHILD:\n"
+            f"1. MAXIMUM {w} words per sentence. ONE sentence only.\n"
+            f"2. Use only simple words the child can understand.\n"
+            f"3. Never repeat the same sentence word-for-word.\n"
+            f"4. Be warm and encouraging — praise every attempt.\n"
+            f"5. Sometimes end with a simple question.\n"
         )
 
     def _style_guidance(self) -> str:

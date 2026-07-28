@@ -382,20 +382,37 @@ class AudioCapture:
         self.stop()
 
     def _load_vad(self):
-        """Load Silero VAD model."""
+        """Load Silero VAD (torch) or fallback to webrtcvad."""
+        self._vad_model = None
+        self._vad_backend = None  # "silero" or "webrtc"
+
+        # Try Silero first (best accuracy)
         try:
             import torch
             model, utils = torch.hub.load(
-                'snakers4/silero-vad',
-                'silero_vad',
-                force_reload=False,
-                onnx=False,
+                'snakers4/silero-vad', 'silero_vad',
+                force_reload=False, onnx=False,
             )
             self._vad_model = model
             self._vad_utils = utils
-        except Exception as e:
-            print(f"[WARN] Failed to load Silero VAD: {e}. VAD disabled.")
-            self._vad_model = None
+            self._vad_backend = "silero"
+            print("[INFO] VAD: Silero (torch)")
+            return
+        except Exception:
+            pass
+
+        # Fallback: webrtcvad (lightweight, no torch)
+        try:
+            import webrtcvad
+            self._vad_model = webrtcvad.Vad(2)  # Aggressiveness 0-3, 2 = balanced
+            self._vad_backend = "webrtc"
+            print("[INFO] VAD: webrtcvad (no torch)")
+            return
+        except Exception:
+            pass
+
+        print("[WARN] No VAD available. Install 'torch' or 'webrtcvad'.")
+        self._vad_model = None
 
     # ── Audio capture ────────────────────────────────────────────
 

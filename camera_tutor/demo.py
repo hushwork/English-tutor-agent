@@ -190,7 +190,7 @@ async def run_hardware():
 
     # ── Init hardware ────────────────────────────────────────
     print("\n[1/6] Camera...")
-    camera = CameraPipeline(camera_id=0, fps=3, resolution=(640, 480))
+    camera = CameraPipeline(camera_id=0, fps=1, resolution=(640, 480), scene_change_threshold=0.25, key_frame_min_interval=10.0)
     camera.start()
     print("       ✅ Ready")
 

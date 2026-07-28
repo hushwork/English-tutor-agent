@@ -64,6 +64,13 @@ class CameraPipeline:
 
     # ── Lifecycle ────────────────────────────────────────────────
 
+    def __del__(self):
+        """Auto-release camera on garbage collection (safety net)."""
+        try:
+            self.stop()
+        except Exception:
+            pass
+
     def start(self):
         """Open the camera and begin capturing."""
         self._cap = cv2.VideoCapture(self.camera_id)

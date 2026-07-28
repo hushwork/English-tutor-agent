@@ -184,10 +184,22 @@ def on_message(ws, message):
         pass  # 音频段结束
 
     elif event_type == "response.audio_transcript.done":
-        # Emma 说完了 — 显示文字
+        # Emma 说完了 — 推脸到 Dashboard
         transcript = event.get("transcript", "")
         if transcript:
             print(f"  🤖 {tutor.name}: {transcript}")
+            try:
+                first_word = transcript.split()[0]
+                viseme = emma_avatar._word_to_viseme(first_word)
+                from camera_tutor.live2d_bridge import VisemeParams
+                p = VisemeParams.from_viseme(viseme)
+                import httpx
+                httpx.post("http://localhost:8200/api/emma/face", json={
+                    "viseme": viseme.label, "mouth_open": p.mouth_open,
+                    "tongue_visible": p.tongue_visible, "transcript": transcript,
+                }, timeout=1)
+            except Exception:
+                pass
 
     elif event_type == "conversation.item.input_audio_transcription.completed":
         # 孩子说了什么 — 显示文字

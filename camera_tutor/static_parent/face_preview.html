@@ -193,6 +193,28 @@ function sayWord() {
   // Enter key
   document.getElementById('textInput').addEventListener('keydown', e => { if(e.key==='Enter') sayWord(); });
 })();
+
+// ── Auto-poll from realtime conversation ──
+async function pollFace() {
+  try {
+    const resp = await fetch('/api/emma/face');
+    const data = await resp.json();
+    if (data.transcript && data.mouth_open !== undefined) {
+      renderFace(data);
+      document.getElementById('status').textContent = '💬 ' + data.transcript;
+      document.getElementById('mouthVal').textContent = data.mouth_open.toFixed(2);
+      document.getElementById('tongueVal').textContent = data.tongue_visible.toFixed(2);
+    }
+  } catch(e) {}
+}
+
+// Check for auto-poll mode: ?live or auto if no button clicks
+let lastClick = Date.now();
+document.addEventListener('click', () => { lastClick = Date.now(); });
+setInterval(() => {
+  if (Date.now() - lastClick > 5000) { pollFace(); }  // Auto-poll after 5s idle
+}, 500);
+pollFace();
 </script>
 </body>
 </html>

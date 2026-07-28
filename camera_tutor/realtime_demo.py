@@ -42,7 +42,7 @@ if not API_KEY:
     sys.exit(1)
 
 WORKSPACE_ID = "llm-xo2ff9jhvnvgvu6b"
-MODEL = "qwen-omni-turbo-realtime"  # 也可用 qwen3.5-omni-plus-realtime
+MODEL = "qwen3.5-omni-flash-realtime"  # 也可用 qwen3.5-omni-plus-realtime
 
 WS_URL = f"wss://{WORKSPACE_ID}.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime?model={MODEL}"
 

@@ -405,16 +405,20 @@ async def handle_child_speech(
         f"Example: 'That sounds great! Tell me more!'"
     )
 
-    async for chunk in omni.stream_response(text=prompt):
-        if chunk["type"] == "text":
-            print(f"  🤖 Emma: {chunk['content']}", end="", flush=True)
-        elif chunk["type"] == "audio":
-            import numpy as np
-            audio_np = np.frombuffer(chunk["content"], dtype=np.int16).astype(np.float32) / 32767.0
-            playback.enqueue(audio_np)
-        elif chunk["type"] == "done":
-            print()
-            break
+    print(f"  [DEBUG] Calling Qwen-Omni...")
+    try:
+        async for chunk in omni.stream_response(text=prompt):
+            if chunk["type"] == "text":
+                print(f"  🤖 Emma: {chunk['content']}", end="", flush=True)
+            elif chunk["type"] == "audio":
+                import numpy as np
+                audio_np = np.frombuffer(chunk["content"], dtype=np.int16).astype(np.float32) / 32767.0
+                playback.enqueue(audio_np)
+            elif chunk["type"] == "done":
+                print()
+                break
+    except Exception as e:
+        print(f"  [ERROR] {e}")
 
     reporter.log_event("child_spoke")
     reporter.log_event("interaction_end")

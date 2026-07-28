@@ -264,6 +264,7 @@ async def run_hardware():
             # ── Step 0: Listen for speech (runs EVERY cycle) ──
             chunk = capture.read_chunk()
             if chunk and chunk.is_speech and not playback.is_playing:
+                print(f"[VAD] Speech! prob={chunk.is_speech}")
                 print("[VAD] Speech detected — capturing...")
                 segment = capture.read_speech_segment(timeout=5.0)
                 if segment:

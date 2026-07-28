@@ -202,10 +202,14 @@ function connectWS() {
   ws.onmessage = function(event) {
     const data = JSON.parse(event.data);
     if (data.mouth_open !== undefined) {
-      renderFace(data);
+      // Map API field names to renderFace() parameter names
+      const v = {open: data.mouth_open, width: 0.3, tongue: data.tongue_visible || 0};
+      renderFace(v);
+      const live = document.getElementById('liveStatus');
+      if (live) live.style.display = 'block';
       document.getElementById('status').textContent = data.transcript ? '💬 ' + data.transcript : '🟢 Live — Emma is listening...';
       document.getElementById('mouthVal').textContent = data.mouth_open.toFixed(2);
-      document.getElementById('tongueVal').textContent = data.tongue_visible.toFixed(2);
+      document.getElementById('tongueVal').textContent = (data.tongue_visible||0).toFixed(2);
     }
   };
   ws.onclose = function() { setTimeout(connectWS, 2000); };  // reconnect

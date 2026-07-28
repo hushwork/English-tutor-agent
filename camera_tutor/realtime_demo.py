@@ -101,6 +101,7 @@ print()
 tutor = get_active_tutor()
 _ws = None
 _running = True
+_last_audio_time = [0.0]  # for response.create fallback
 
 def on_open(ws):
     global _ws

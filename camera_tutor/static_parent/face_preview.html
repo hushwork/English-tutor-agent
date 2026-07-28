@@ -2,221 +2,42 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Emma — Face Preview</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Emma — Live2D</title>
 <style>
-  body { background:#0f1117; color:#e4e6ef; font-family:sans-serif; display:flex; height:100vh; margin:0; }
-  .container { display:flex; flex-direction:column; align-items:center; justify-content:center; margin:auto; gap:20px; }
-  #face {
-    border-radius:50%; background:linear-gradient(135deg,#1a1d27,#242836);
-    padding:20px; width:300px; height:300px; display:flex; align-items:center; justify-content:center;
-  }
-  #face svg { width:100%; height:100%; }
-  .controls { display:flex; flex-direction:column; gap:10px; min-width:300px; }
-  .btn-row { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; }
-  .btn {
-    padding:8px 14px; border:1px solid #2a2d3a; border-radius:8px; background:#1a1d27;
-    color:#e4e6ef; cursor:pointer; font-size:12px; transition:all 0.2s;
-  }
-  .btn:hover { background:#242836; border-color:#6c8cff; }
-  .btn.active { background:#6c8cff; color:#fff; border-color:#6c8cff; }
-  .textbox { display:flex; gap:8px; }
-  .textbox input { flex:1; padding:8px 12px; border:1px solid #2a2d3a; border-radius:8px;
-    background:#1a1d27; color:#e4e6ef; font-size:14px; }
-  .textbox button { padding:8px 16px; background:#4ecf8d; border:none; border-radius:8px; color:#fff; cursor:pointer; font-size:14px; }
-  .param { display:flex; gap:12px; justify-content:center; font-size:12px; color:#8b8fa3; }
-  .status { font-size:13px; color:#8b8fa3; text-align:center; padding:4px; }
-  .viseme-indicator { display:flex; gap:4px; justify-content:center; flex-wrap:wrap; }
-  .viseme-dot { width:10px; height:10px; border-radius:50%; background:#1a1d27; border:1px solid #2a2d3a; }
-  .viseme-dot.on { background:#6c8cff; box-shadow:0 0 6px #6c8cff; }
+  body { margin:0; background:#0f1117; overflow:hidden; }
+  canvas { display:block; }
+  #info { position:fixed; bottom:12px; left:50%; transform:translateX(-50%); color:#8b8fa3; font:13px sans-serif; display:flex; gap:16px; align-items:center; z-index:100; }
+  .dot { width:8px; height:8px; border-radius:50%; display:inline-block; margin-right:6px; }
+  .dot.on { background:#4ecf8d; }
+  .dot.off { background:#ff5c6c; }
 </style>
 </head>
 <body>
-<div class="container">
-  <div id="face"></div>
-  <div class="param">
-    <span>👄 <span id="mouthVal">0.0</span></span>
-    <span>👅 <span id="tongueVal">0.0</span></span>
-    <span>😊 <span id="emoVal">neutral</span></span>
-  </div>
-  <div class="controls">
-    <div class="viseme-indicator" id="visemeDots"></div>
-    <div class="btn-row" id="visemeBtns"></div>
-    <div class="textbox">
-      <input type="text" id="textInput" placeholder="Type a word..." value="Hello">
-      <button onclick="sayWord()">Say</button>
-    </div>
-    <div class="status" id="status">Type a word to see Emma's mouth move</div>
-    <div class="status" id="liveStatus" style="display:none;color:#4ecf8d">🟢 Live — listening</div>
-  </div>
+<div id="info">
+  <span class="dot off" id="wssDot"></span>
+  <span id="status">Loading...</span>
+  <span>👄<span id="mouthVal">0</span></span>
 </div>
 
+<script src="live2d/core/live2dcubismcore.min.js"></script>
+<script type="module" src="live2d/bundle.js"></script>
 <script>
-// ── Viseme definitions ──
-const VISEMES = {
-  V00_SIL:  {label:"sil", open:0.05, width:0.3, tongue:0},
-  V01_AE_AH:{label:"ae",  open:0.85, width:0.65,tongue:0},
-  V02_AA:   {label:"aa",  open:0.95, width:0.55,tongue:0},
-  V04_EH_EY:{label:"eh",  open:0.35, width:0.45,tongue:0},
-  V05_ER:   {label:"er",  open:0.3,  width:0.3, tongue:0},
-  V06_IY_IH:{label:"iy",  open:0.12, width:0.9, tongue:0},
-  V07_UW_W: {label:"uw",  open:0.12, width:0.15,tongue:0},
-  V08_OW:   {label:"ow",  open:0.35, width:0.2, tongue:0},
-  V13_R:    {label:"r",   open:0.1,  width:0.15,tongue:0},
-  V14_L:    {label:"l",   open:0.15, width:0.35,tongue:0.5},
-  V15_S_Z:  {label:"sz",  open:0.05, width:0.5, tongue:0.3},
-  V12_H:   {label:"h",   open:0.5,  width:0.4, tongue:0},
-  V16_SH_ZH:{label:"sh",  open:0.08, width:0.2, tongue:0},
-  V17_TH_DH:{label:"th",  open:0.1,  width:0.35,tongue:1.0},
-  V18_F_V:  {label:"fv",  open:0.03, width:0.35,tongue:0},
-  V19_T_D_N:{label:"td",  open:0.08, width:0.3, tongue:0.3},
-  V20_K_G_NG:{label:"kg", open:0.2,  width:0.35,tongue:0},
-  V21_P_B_M:{label:"pb",  open:0,    width:0.3, tongue:0},
-};
-
-// Word to viseme lookup (simplified)
-function wordToViseme(word) {
-  const w = word.toLowerCase().replace(/[^a-z]/g,'');
-  if (!w) return VISEMES.V00_SIL;
-  const firstLetter = w[0];
-  const hasTh = w.startsWith('th');
-  const vowel = w.match(/[aeiou]/);
-  
-  if (hasTh) return VISEMES.V17_TH_DH;
-  if (/^[fv]/.test(w)) return VISEMES.V18_F_V;
-  if (/^[wr]/.test(w)) return ['wet','red','water'].some(s=>w.startsWith(s)) ? VISEMES.V13_R : VISEMES.V07_UW_W;
-  if (/^[l]/.test(w)) return VISEMES.V14_L;
-  if (/^[sz]/.test(w)) return VISEMES.V15_S_Z;
-  if (/^[shchj]/.test(w)) return VISEMES.V16_SH_ZH;
-  if (/^[tdn]/.test(w)) return VISEMES.V19_T_D_N;
-  if (/^[kg]/.test(w)) return VISEMES.V20_K_G_NG;
-  if (/^[pbm]/.test(w)) return VISEMES.V21_P_B_M;
-  if (/^[h]/.test(w)) return VISEMES.V12_H;
-  if (/^[y]/.test(w)) return VISEMES.V06_IY_IH;
-  
-  // Vowels
-  if (vowel) {
-    const v = vowel[0];
-    if ('ae'.includes(v)) return VISEMES.V01_AE_AH;
-    if ('o'.includes(v)) return VISEMES.V08_OW;
-    if ('i'.includes(v)) return VISEMES.V06_IY_IH;
-    if ('u'.includes(v)) return VISEMES.V07_UW_W;
-  }
-  return VISEMES.V00_SIL;
-}
-
-function renderFace(viseme) {
-  const cx = 150, cy = 150, r = 50;
-  let mouth = '';
-  const o = viseme.open, t = viseme.tongue;
-  
-  if (viseme === VISEMES.V21_P_B_M) {
-    mouth = `<line x1="${cx-r*0.6}" y1="${cy}" x2="${cx+r*0.6}" y2="${cy}" stroke="#cc7766" stroke-width="3" stroke-linecap="round"/>`;
-  } else if (viseme === VISEMES.V06_IY_IH) {
-    mouth = `<path d="M ${cx-r*0.7} ${cy} Q ${cx-r*0.35} ${cy+r*0.3} ${cx} ${cy+r*0.15} Q ${cx+r*0.35} ${cy+r*0.3} ${cx+r*0.7} ${cy}" fill="none" stroke="#cc7766" stroke-width="3" stroke-linecap="round"/>`;
-  } else if (viseme === VISEMES.V18_F_V) {
-    mouth = `<path d="M ${cx-r*0.55} ${cy} Q ${cx-r*0.2} ${cy+r*0.15} ${cx} ${cy+r*0.1} Q ${cx+r*0.2} ${cy+r*0.15} ${cx+r*0.55} ${cy}" fill="none" stroke="#cc7766" stroke-width="3" stroke-linecap="round"/>`;
-  } else {
-    const h = o * r * 0.7;
-    mouth = `<path d="M ${cx-r*0.55} ${cy} Q ${cx} ${cy+h*0.7} ${cx+r*0.55} ${cy}" fill="none" stroke="#cc7766" stroke-width="3" stroke-linecap="round"/>`;
-  }
-  
-  const tongue = t > 0.5 ? `<ellipse cx="${cx}" cy="${cy+r*0.15}" rx="${r*0.12}" ry="${r*0.08}" fill="#ff8888" opacity="0.8"/>` : '';
-  
-  const svg = `<svg viewBox="0 0 300 300">
-    <defs><radialGradient id="g" cx="50%" cy="40%" r="50%">
-      <stop offset="0%" style="stop-color:#ffe4c4"/>
-      <stop offset="100%" style="stop-color:#f0c8a0"/>
-    </radialGradient></defs>
-    <ellipse cx="${cx}" cy="${cy}" rx="${r*1.1}" ry="${r*1.2}" fill="url(#g)" stroke="#e0b890" stroke-width="2"/>
-    <ellipse cx="${cx-r*0.35}" cy="${cy-r*0.25}" rx="${r*0.1}" ry="${r*0.12}" fill="#333"/>
-    <ellipse cx="${cx+r*0.35}" cy="${cy-r*0.25}" rx="${r*0.1}" ry="${r*0.12}" fill="#333"/>
-    <path d="M ${cx-r*0.45} ${cy-r*0.45} Q ${cx-r*0.35} ${cy-r*0.5} ${cx-r*0.2} ${cy-r*0.43}" stroke="#8b6b4a" stroke-width="2.5" fill="none"/>
-    <path d="M ${cx+r*0.2} ${cy-r*0.43} Q ${cx+r*0.35} ${cy-r*0.5} ${cx+r*0.45} ${cy-r*0.45}" stroke="#8b6b4a" stroke-width="2.5" fill="none"/>
-    <ellipse cx="${cx}" cy="${cy+r*0.08}" rx="${r*0.06}" ry="${r*0.05}" fill="#e8c8a8"/>
-    ${mouth}
-    ${tongue}
-    <ellipse cx="${cx-r*0.5}" cy="${cy+r*0.3}" rx="${r*0.15}" ry="${r*0.08}" fill="#ffcccc" opacity="0.3"/>
-    <ellipse cx="${cx+r*0.5}" cy="${cy+r*0.3}" rx="${r*0.15}" ry="${r*0.08}" fill="#ffcccc" opacity="0.3"/>
-  </svg>`;
-  document.getElementById('face').innerHTML = svg;
-  document.getElementById('mouthVal').textContent = o.toFixed(2);
-  document.getElementById('tongueVal').textContent = t.toFixed(2);
-}
-
-function sayWord() {
-  const input = document.getElementById('textInput');
-  const word = input.value.trim() || 'hello';
-  const viseme = wordToViseme(word);
-  renderFace(viseme);
-  
-  // Word-by-word animation
-  const words = word.split(/\s+/);
-  let i = 0;
-  document.getElementById('status').textContent = `🔊 Emma says: "${word}"`;
-  const interval = setInterval(() => {
-    if (i >= words.length) { clearInterval(interval); return; }
-    const v = wordToViseme(words[i]);
-    renderFace(v);
-    document.getElementById('status').textContent = `🔊 ${words[i]} → mouth_open=${v.open.toFixed(2)} tongue=${v.tongue.toFixed(2)}`;
-    // Highlight viseme dot
-    document.querySelectorAll('.viseme-dot').forEach((d,j) => d.className='viseme-dot' + (j===Object.keys(VISEMES).indexOf(Object.keys(VISEMES).find(k=>VISEMES[k]===v))?' on':''));
-    i++;
-  }, 400);
-  
-  setTimeout(() => {
-    renderFace(VISEMES.V00_SIL);
-    document.getElementById('status').textContent = 'Emma is listening...';
-    document.querySelectorAll('.viseme-dot').forEach(d => d.className='viseme-dot');
-  }, word.length * 400 + 500);
-}
-
-// Init
-(function() {
-  renderFace(VISEMES.V00_SIL);
-  const container = document.getElementById('visemeBtns');
-  Object.entries(VISEMES).forEach(([key, v]) => {
-    const btn = document.createElement('button');
-    btn.className = 'btn';
-    btn.textContent = v.label;
-    btn.onclick = () => { renderFace(v); document.getElementById('status').textContent = `${v.label}: open=${v.open} tongue=${v.tongue}`; };
-    container.appendChild(btn);
-  });
-  // Viseme indicator dots
-  const dots = document.getElementById('visemeDots');
-  Object.values(VISEMES).forEach(v => {
-    const dot = document.createElement('div');
-    dot.className = 'viseme-dot';
-    dot.title = v.label;
-    dots.appendChild(dot);
-  });
-  document.getElementById('status').textContent = 'Type a word and press Say to see Emma\'s mouth move';
-  
-  // Enter key
-  document.getElementById('textInput').addEventListener('keydown', e => { if(e.key==='Enter') sayWord(); });
-})();
-
-// ── WebSocket live face from realtime conversation ──
-let ws = null;
-function connectWS() {
-  const protocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
-  ws = new WebSocket(protocol + location.host + '/ws/emma/face');
-  ws.onmessage = function(event) {
-    const data = JSON.parse(event.data);
-    if (data.mouth_open !== undefined) {
-      // Map API field names to renderFace() parameter names
-      const v = {open: data.mouth_open, width: 0.3, tongue: data.tongue_visible || 0};
-      renderFace(v);
-      const live = document.getElementById('liveStatus');
-      if (live) live.style.display = 'block';
-      document.getElementById('status').textContent = data.transcript ? '💬 ' + data.transcript : '🟢 Live — Emma is listening...';
-      document.getElementById('mouthVal').textContent = data.mouth_open.toFixed(2);
-      document.getElementById('tongueVal').textContent = (data.tongue_visible||0).toFixed(2);
+(function connectWS() {
+  const p = location.protocol === 'https:' ? 'wss://' : 'ws://';
+  const ws = new WebSocket(p + location.host + '/ws/emma/face');
+  ws.onopen = () => { document.getElementById('wssDot').className = 'dot on'; };
+  ws.onmessage = (ev) => {
+    const d = JSON.parse(ev.data);
+    if (d.mouth_open !== undefined) {
+      window._setMouthOpen?.(d.mouth_open, d.viseme);
+      document.getElementById('status').textContent = d.transcript ? '💬 '+d.transcript : '🟢 Live';
+      document.getElementById('mouthVal').textContent = d.mouth_open.toFixed(2);
     }
   };
-  ws.onclose = function() { setTimeout(connectWS, 2000); };  // reconnect
-  ws.onerror = function() { ws.close(); };
-}
-connectWS();
+  ws.onclose = () => { document.getElementById('wssDot').className = 'dot off'; setTimeout(connectWS, 2000); };
+  ws.onerror = () => ws.close();
+})();
 </script>
 </body>
 </html>

@@ -78,13 +78,6 @@ spk = pa.open(format=pyaudio.paInt16, channels=1, rate=RATE_SPK, output=True)
 print(f"   Mic: device {mic_index}")
 print(f"   Model: {MODEL}")
 
-# 清空上次的嘴型状态
-try:
-    import httpx
-    httpx.post("http://localhost:8200/api/emma/face/reset", timeout=1)
-except:
-    pass
-
 # 启动摄像头（1 fps，场景变化时才上传）
 camera = CameraPipeline(camera_id=0, fps=1, resolution=(224, 224),
                         scene_change_threshold=0.20, key_frame_min_interval=1.0)
@@ -99,9 +92,11 @@ print()
 # ── WebSocket callbacks ─────────────────────────────────────────
 
 tutor = get_active_tutor()
+emma_avatar = EmmaAvatar()   # instance — drives face viseme lookup
 _ws = None
 _running = True
 _last_audio_time = [0.0]  # for response.create fallback
+_audio_started = threading.Event()  # gate: audio before camera image
 
 def on_open(ws):
     global _ws
@@ -121,15 +116,16 @@ def on_open(ws):
             "input_audio_format": "pcm",
             "output_audio_format": "pcm",
             "turn_detection": {
-                "type": "semantic_vad",
+                "type": "server_vad",
                 "threshold": 0.5,
-                "silence_duration_ms": 600,
+                "silence_duration_ms": 400,
             },
         }
     }))
 
     # 启动麦克风发送线程
     def send_audio():
+        first = True
         while _running:
             try:
                 data = mic.read(CHUNK, exception_on_overflow=False)
@@ -137,6 +133,9 @@ def on_open(ws):
                     "type": "input_audio_buffer.append",
                     "audio": base64.b64encode(data).decode()
                 }))
+                if first:
+                    first = False
+                    _audio_started.set()  # signal camera: audio flowing
             except Exception:
                 break
     threading.Thread(target=send_audio, daemon=True).start()
@@ -144,6 +143,7 @@ def on_open(ws):
     # 启动摄像头发送线程（场景变化时 1fps，静止时每 15 秒 1 帧保活）
     if camera:
         def send_camera():
+            _audio_started.wait()  # wait until first audio is sent
             still_seconds = 0
             while _running:
                 try:
@@ -175,39 +175,189 @@ def on_open(ws):
                     pass
         threading.Thread(target=send_camera, daemon=True).start()
 
+# ── Whisper-aligned face sync ───────────────────────────────
+# Buffers audio, runs faster-whisper on transcript.done for word-level
+# timestamps, then plays audio + viseme in perfect sync.
+# Adds only ~0.3s whisper inference delay (tiny model, CPU).
+_buffer_audio: list[bytes] = []
+_buffer_transcript: list[str] = []
+_buffer_seq_id = 0
+_face_timer = None
+_face_seq_id = 0
+_whisper_model = None  # lazy init
+
+def _get_whisper():
+    global _whisper_model
+    if _whisper_model is None:
+        from faster_whisper import WhisperModel
+        # Use mirror for faster download in China
+        os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+        print("   ⏳ Loading whisper tiny model...", flush=True)
+        _whisper_model = WhisperModel("tiny", device="cpu", compute_type="int8")
+        print("   ✅ Whisper ready", flush=True)
+    return _whisper_model
+
+def _push_face_viseme(word: str, full_transcript: str):
+    try:
+        if not word or not word.strip():
+            mouth_open, tongue_visible, mouth_width, viseme_label = 0.05, 0.0, 0.3, "sil"
+        else:
+            viseme = emma_avatar._word_to_viseme(word)
+            from camera_tutor.live2d_bridge import VisemeParams
+            p = VisemeParams.from_viseme(viseme)
+            mouth_open, tongue_visible, mouth_width, viseme_label = \
+                p.mouth_open, p.tongue_visible, p.mouth_width, viseme.label
+        import httpx
+        httpx.post("http://localhost:8200/api/emma/face", json={
+            "viseme": viseme_label, "mouth_open": mouth_open,
+            "mouth_width": mouth_width, "tongue_visible": tongue_visible,
+            "transcript": full_transcript,
+        }, timeout=1)
+    except Exception as e:
+        print(f"  ⚠️ face push error: {e}")
+
+def _build_wav(samples: bytes) -> bytes:
+    """Wrap raw 24kHz 16bit mono PCM in a minimal WAV header."""
+    import struct
+    data_len = len(samples)
+    header = struct.pack(
+        '<4sI4s4sIHHIIHH4sI',
+        b'RIFF', 36 + data_len, b'WAVE',
+        b'fmt ', 16, 1, 1, 24000, 24000 * 2, 2, 16,
+        b'data', data_len
+    )
+    return header + samples
+
+def _flush_whisper_sync():
+    """Run whisper alignment, then play audio + viseme in sync."""
+    global _buffer_audio, _buffer_transcript, _buffer_seq_id, _face_timer, _face_seq_id
+    if not _buffer_audio:
+        return
+    _buffer_seq_id += 1
+    seq = _buffer_seq_id
+
+    audio_chunks = _buffer_audio[:]
+    transcript = " ".join(_buffer_transcript).strip()
+    _buffer_audio = []
+    _buffer_transcript = []
+
+    words = transcript.split()
+    if not words or len(words) < 2:
+        # Too short for alignment — just play
+        for chunk in audio_chunks:
+            spk.write(chunk)
+        return
+
+    # Build WAV in memory, run whisper
+    try:
+        wav = _build_wav(b"".join(audio_chunks))
+        model = _get_whisper()
+        import io
+        segments, _ = model.transcribe(
+            io.BytesIO(wav), word_timestamps=True,
+            language="en", beam_size=1,
+            vad_filter=False, initial_prompt=transcript,
+        )
+        word_times = []
+        for seg in segments:
+            if seg.words:
+                for w in seg.words:
+                    word_times.append((w.word.strip(',.!?\'"'), w.start, w.end))
+    except Exception as e:
+        print(f"  ⚠️ whisper failed: {e}, fallback to direct play")
+        for chunk in audio_chunks:
+            spk.write(chunk)
+        return
+
+    if not word_times:
+        for chunk in audio_chunks:
+            spk.write(chunk)
+        return
+
+    # Cancel previous face timer
+    if _face_timer:
+        _face_timer.cancel()
+    _face_seq_id += 1
+    fseq = _face_seq_id
+
+    # Schedule face pushes at whisper timestamps
+    for w, start_s, end_s in word_times:
+        if not w:
+            continue
+        delay = start_s
+        def _push_at_time(word=w, d=delay, s=fseq):
+            if s != _face_seq_id or seq != _buffer_seq_id:
+                return
+            if d > 0:
+                t = threading.Timer(d, lambda: _push_face_viseme(word, transcript))
+                t.daemon = True
+                t.start()
+            else:
+                _push_face_viseme(word, transcript)
+        _push_at_time()
+
+    # Schedule reset at end
+    last_end = word_times[-1][2] if word_times else 0
+    def _reset_later():
+        if fseq == _face_seq_id:
+            _push_face_viseme("", transcript)
+    _face_timer = threading.Timer(last_end + 0.3, _reset_later)
+    _face_timer.daemon = True
+    _face_timer.start()
+
+    # Play audio in background
+    def _play():
+        import time as _t
+        for chunk in audio_chunks:
+            if seq != _buffer_seq_id:
+                break
+            spk.write(chunk)
+    threading.Thread(target=_play, daemon=True).start()
+
+
 def on_message(ws, message):
+    global _buffer_audio, _buffer_transcript
     try:
         event = json.loads(message)
     except json.JSONDecodeError:
         return
 
     event_type = event.get("type", "")
+    # Debug: log all non-audio-delta events
+    if event_type != "response.audio.delta":
+        print(f"  [event] {event_type}", flush=True)
+
+    if event_type == "session.updated":
+        # API session confirmed — open browser now
+        try:
+            import webbrowser, httpx as _hx
+            for p in ["/static/face_preview.html", "/static/live2d/bundle.js",
+                      "/static/live2d/core/live2dcubismcore.min.js"]:
+                try: _hx.get(f"http://localhost:8200{p}", timeout=2)
+                except: pass
+            webbrowser.open("http://localhost:8200/static/face_preview.html")
+            print("   🔗 Emma 面部页面已打开")
+        except Exception:
+            pass
 
     if event_type == "response.audio.delta":
-        # Emma 说话的音频流 — 立即播放
-        audio_bytes = base64.b64decode(event["delta"])
-        spk.write(audio_bytes)
+        # Buffer audio for whisper-aligned playback
+        _buffer_audio.append(base64.b64decode(event["delta"]))
 
-    elif event_type == "response.audio.done":
-        pass  # 音频段结束
+    elif event_type == "response.audio_transcript.delta":
+        delta = event.get("delta", "")
+        if delta:
+            _buffer_transcript.append(delta)
 
     elif event_type == "response.audio_transcript.done":
-        # Emma 说完了 — 推脸到 Dashboard
         transcript = event.get("transcript", "")
         if transcript:
             print(f"  🤖 {tutor.name}: {transcript}")
-            try:
-                first_word = transcript.split()[0]
-                viseme = emma_avatar._word_to_viseme(first_word)
-                from camera_tutor.live2d_bridge import VisemeParams
-                p = VisemeParams.from_viseme(viseme)
-                import httpx
-                httpx.post("http://localhost:8200/api/emma/face", json={
-                    "viseme": viseme.label, "mouth_open": p.mouth_open,
-                    "tongue_visible": p.tongue_visible, "transcript": transcript,
-                }, timeout=1)
-            except Exception:
-                pass
+            _buffer_transcript = [transcript]
+        _flush_whisper_sync()
+
+    elif event_type == "response.audio.done":
+        _flush_whisper_sync()
 
     elif event_type == "conversation.item.input_audio_transcription.completed":
         child_text = event.get("transcript", "")
@@ -226,6 +376,44 @@ def on_error(ws, error):
 def on_close(ws, status, msg):
     print(f"\n  连接已关闭 (code={status})")
 
+# ── Dashboard auto-start ──────────────────────────────────────
+
+def _start_dashboard(port: int = 8200):
+    """Start the dashboard server in a background thread if not already running."""
+    import httpx
+    try:
+        r = httpx.get(f"http://localhost:{port}/api/health", timeout=0.5)
+        if r.status_code == 200:
+            print(f"   Dashboard: ✅ already running on port {port}")
+            return
+    except Exception:
+        pass
+
+    print(f"   Dashboard: ⏳ starting on port {port}...")
+    import uvicorn
+    def _run():
+        uvicorn.run(
+            "camera_tutor.dashboard_server:app",
+            host="0.0.0.0", port=port,
+            log_level="warning",
+        )
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+
+    # Wait until ready
+    for _ in range(30):
+        try:
+            r = httpx.get(f"http://localhost:{port}/api/health", timeout=0.5)
+            if r.status_code == 200:
+                print(f"   Dashboard: ✅ ready on http://localhost:{port}")
+                return
+        except Exception:
+            pass
+        time.sleep(0.2)
+    print(f"   Dashboard: ⚠️ 启动超时，请手动运行")
+    print(f"     python3 -m uvicorn camera_tutor.dashboard_server:app --host 0.0.0.0 --port {port}")
+
+
 # ── Main ────────────────────────────────────────────────────────
 
 import websocket
@@ -235,12 +423,18 @@ print("  Camera Tutor — 实时语音对话")
 print("  (WebSocket · 服务端 VAD · 实时打断)")
 print("=" * 55)
 print()
+
+# 自动启动 Dashboard（提供面部动画 WebSocket 广播 + 静态页面）
+_start_dashboard(8200)
+
+# 清空上次的嘴型状态
+import httpx
 try:
-    import webbrowser
-    webbrowser.open("http://localhost:8200/static/face_preview.html")
-    print("   \U0001f517 \u5df2\u6253\u5f00 Emma \u8138\u90e8\u9875\u9762")
-except:
-    print("   \U0001f517 \u6253\u5f00 http://localhost:8200/static/face_preview.html \u67e5\u770b Emma \u5634\u578b")
+    httpx.post("http://localhost:8200/api/emma/face/reset", timeout=1)
+except Exception:
+    pass
+
+print()
 
 ws = websocket.WebSocketApp(
     WS_URL,

@@ -11,6 +11,7 @@
   pip install websocket-client pyaudio numpy
 """
 
+from dotenv import load_dotenv
 import json
 import os
 import threading
@@ -18,6 +19,8 @@ import time
 import base64
 import sys
 import cv2
+
+load_dotenv()
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))

@@ -195,7 +195,18 @@ async def run_hardware():
     print("       ✅ Ready")
 
     print("[2/6] Microphone (VAD always on)...")
-    capture = AudioCapture(sample_rate=16000, chunk_duration=0.05, vad_threshold=0.3)
+    # Use Jabra headset mic by default (clearer than camera mic)
+    jabra_device = None
+    try:
+        import pyaudio
+        p = pyaudio.PyAudio()
+        for i in range(p.get_device_count()):
+            if 'Jabra' in p.get_device_info_by_index(i)['name'] and p.get_device_info_by_index(i)['maxInputChannels'] > 0:
+                jabra_device = i
+                break
+        p.terminate()
+    except: pass
+    capture = AudioCapture(sample_rate=16000, chunk_duration=0.05, vad_threshold=0.3, device_index=jabra_device)
     capture.start()
     print("       ✅ Ready — VAD listening")
 

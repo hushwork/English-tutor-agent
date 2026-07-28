@@ -77,10 +77,14 @@ _device_state = {
 
 STATIC_DIR = Path(__file__).resolve().parent / "static_parent"
 STATIC_DIR.mkdir(exist_ok=True)
-app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static_parent")
 
+# Mount static files (face_preview.html, etc.)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 @app.get("/")
+async def serve_dashboard():
+    """Serve the parent dashboard SPA."""
+    return HTMLResponse((STATIC_DIR / "index.html").read_text())
 async def serve_dashboard():
     """Serve the parent dashboard SPA."""
     index_path = STATIC_DIR / "index.html"

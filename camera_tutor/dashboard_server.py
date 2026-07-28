@@ -300,6 +300,21 @@ async def api_set_child_age(age: int = Query(ge=1, le=18)):
 
 
 
+# Emma's real-time face state (written by realtime_demo.py)
+_emma_face = {"viseme": "rest", "mouth_open": 0.0, "tongue_visible": 0.0, "transcript": ""}
+
+@app.get("/api/emma/face")
+async def get_emma_face():
+    """Get Emma's current face state (updated in real-time by realtime_demo)."""
+    return _emma_face
+
+@app.post("/api/emma/face")
+async def set_emma_face(data: dict):
+    """Update Emma's face state (called by realtime_demo)."""
+    _emma_face.update(data)
+    return {"ok": True}
+
+
 # ── Health Check ────────────────────────────────────────────────
 
 @app.get("/api/health")

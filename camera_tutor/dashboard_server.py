@@ -337,7 +337,8 @@ async def get_emma_face():
 async def set_emma_face(data: dict):
     """Update Emma's face state (called by realtime_demo)."""
     _emma_face.update(data)
-    await _broadcast_face()
+    import asyncio
+    asyncio.create_task(_broadcast_face())
     return {"ok": True}
 
 

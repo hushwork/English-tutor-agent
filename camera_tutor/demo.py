@@ -195,7 +195,7 @@ async def run_hardware():
     print("       ✅ Ready")
 
     print("[2/6] Microphone (VAD always on)...")
-    # Auto-detect mic: Brio built-in first, then Jabra
+    # Auto-detect mic: Jabra first, Brio second
     mic_device = None
     try:
         import pyaudio
@@ -204,22 +204,25 @@ async def run_hardware():
             name = p.get_device_info_by_index(i)['name']
             ch = p.get_device_info_by_index(i)['maxInputChannels']
             if ch > 0:
-                if 'Brio' in name and 'mono' in name:
+                # Priority 1: Jabra USB Audio hardware
+                if 'Jabra' in name and 'USB Audio' in name:
                     mic_device = i
-                    print(f"[MIC] Brio 90: {name} (index {i})")
+                    print(f"[MIC] Jabra: {name} (index {i})")
                     break
         if mic_device is None:
             for i in range(p.get_device_count()):
                 name = p.get_device_info_by_index(i)['name']
                 ch = p.get_device_info_by_index(i)['maxInputChannels']
-                if ch > 0 and 'Jabra' in name and 'USB Audio' in name:
+                # Priority 2: Brio camera built-in mic
+                if ch > 0 and 'Brio' in name and 'mono' in name:
                     mic_device = i
-                    print(f"[MIC] Jabra HW: {name} (index {i})")
+                    print(f"[MIC] Brio: {name} (index {i})")
                     break
         if mic_device is None:
             for i in range(p.get_device_count()):
                 name = p.get_device_info_by_index(i)['name']
                 ch = p.get_device_info_by_index(i)['maxInputChannels']
+                # Priority 3: any other mic
                 if ch > 0:
                     mic_device = i
                     print(f"[MIC] Fallback: {name} (index {i})")

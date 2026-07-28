@@ -332,9 +332,11 @@ async def _broadcast_face():
     for ws in _face_clients:
         try:
             await ws.send_json(_emma_face)
-        except Exception:
+        except Exception as e:
+            print(f"[BROADCAST ERROR] {e}")
             dead.add(ws)
     _face_clients -= dead
+    print(f"[BROADCAST] to {len(_face_clients)} clients: {_emma_face.get('transcript','')[:30]}")
 
 @app.get("/api/emma/face")
 async def get_emma_face():

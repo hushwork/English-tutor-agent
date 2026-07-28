@@ -248,11 +248,14 @@ class OmniClient:
                         yield {"type": "audio", "content": audio_bytes}
 
         except Exception as e:
-            # Fallback to non-streaming + TTS
-            print(f"[WARN] Stream failed: {e}. Falling back...")
-            text_result = await self._call_local_text(text)
-            yield {"type": "text", "content": text_result}
-            yield {"type": "done"}
+            # Fallback: try cloud if available
+            print(f"[WARN] Local stream failed: {e}. Falling back to cloud...")
+            if self.cloud_api_key:
+                async for chunk in self._stream_cloud(text, image_b64, audio_b64):
+                    yield chunk
+            else:
+                yield {"type": "text", "content": f"[Error: {e}]"}
+                yield {"type": "done"}
 
     async def _stream_cloud(
         self, text: str, image_b64: str, audio_b64: str

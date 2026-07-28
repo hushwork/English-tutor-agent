@@ -205,7 +205,7 @@ async def run_hardware():
     print("       ✅ Ready")
 
     print("[4/6] Qwen-Omni client...")
-    omni = OmniClient(mode=ModelMode.AUTO)
+    omni = OmniClient(mode=ModelMode.CLOUD)  # No local Orin — use cloud directly
     available = await omni.check_available()
     print(f"       ✅ local={available['local']}, cloud={available['cloud']}")
 

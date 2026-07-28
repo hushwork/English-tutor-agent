@@ -77,6 +77,7 @@ _device_state = {
 
 STATIC_DIR = Path(__file__).resolve().parent / "static_parent"
 STATIC_DIR.mkdir(exist_ok=True)
+app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static_parent")
 
 
 @app.get("/")

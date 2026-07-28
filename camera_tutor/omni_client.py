@@ -68,7 +68,7 @@ class OmniClient:
         mode: ModelMode = ModelMode.AUTO,
         local_base_url: str | None = None,
         cloud_api_key: str | None = None,
-        cloud_model: str = "qwen3-omni-30b",
+        cloud_model: str = "qwen-omni-turbo",
         local_model: str = "qwen2.5-omni-7b",
         timeout: float = 30.0,
     ):
@@ -89,6 +89,11 @@ class OmniClient:
             or ""
         )
         self.cloud_model = cloud_model
+
+        # Cloud base URL — supports custom MaaS endpoints
+        self.cloud_base_url = os.environ.get("LLM_BASE_URL", "").rstrip("/")
+        if not self.cloud_base_url:
+            self.cloud_base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 
         self.local_model = local_model
         self.timeout = timeout
@@ -255,7 +260,7 @@ class OmniClient:
         """Stream from cloud DashScope Qwen-Omni API."""
         if self._cloud_client is None:
             self._cloud_client = httpx.AsyncClient(
-                base_url="https://dashscope-intl.aliyuncs.com",
+                base_url=self.cloud_base_url,
                 headers={"Authorization": f"Bearer {self.cloud_api_key}"},
                 timeout=httpx.Timeout(self.timeout),
             )
@@ -280,7 +285,7 @@ class OmniClient:
 
         try:
             async with self._cloud_client.stream(
-                "POST", "/compatible-mode/v1/chat/completions",
+                "POST", "/chat/completions",
                 json=payload,
             ) as resp:
                 async for line in resp.aiter_lines():
@@ -506,40 +511,60 @@ class OmniClient:
             raise
 
     async def _call_cloud_vision(self, image_b64: str, prompt: str) -> str:
-        """Send vision request to DashScope Qwen-Omni API."""
+        """Send vision request to OpenAI-compatible MaaS endpoint.
+
+        Uses streaming (required for audio output) and requests
+        text+audio modalities from Qwen-Omni.
+        """
         if self._cloud_client is None:
             self._cloud_client = httpx.AsyncClient(
-                base_url="https://dashscope-intl.aliyuncs.com",
+                base_url=self.cloud_base_url,
                 headers={"Authorization": f"Bearer {self.cloud_api_key}"},
                 timeout=httpx.Timeout(self.timeout),
             )
 
-        # DashScope multimodal format
         payload = {
             "model": self.cloud_model,
-            "input": {
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"image": f"data:image/jpeg;base64,{image_b64}"},
-                            {"text": prompt},
-                        ],
-                    }
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
+                    {"type": "text", "text": prompt},
                 ]
-            },
-            "parameters": {
-                "result_format": "json",
-            },
+            }],
+            "max_tokens": 300,
+            "modalities": ["text", "audio"],
+            "audio": {"voice": "Cherry", "format": "wav"},
+            "stream": True,
+            "stream_options": {"include_usage": True},
         }
 
-        resp = await self._cloud_client.post(
-            "/compatible-mode/v1/chat/completions",
-            json=payload,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return data["output"]["choices"][0]["message"]["content"]
+        text = ""
+        async with self._cloud_client.stream("POST", "/chat/completions", json=payload) as resp:
+            if resp.status_code != 200:
+                body = await resp.aread()
+                raise RuntimeError(f"Cloud vision error {resp.status_code}: {body}")
+
+            async for line in resp.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                data_str = line[6:].strip()
+                if data_str == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data_str)
+                except json.JSONDecodeError:
+                    continue
+                choices = chunk.get("choices", [])
+                if not choices:
+                    continue
+                delta = choices[0].get("delta", {})
+                if delta.get("content"):
+                    text += delta["content"]
+
+            # Note: audio from vision+audio combo goes to stream_response(),
+            # not here. This method is for analysis text only.
+        return text
 
     async def _call_local_text(self, prompt: str) -> str:
         """Send text-only request to local Orin server."""
@@ -557,31 +582,24 @@ class OmniClient:
         return resp.json().get("text", "")
 
     async def _call_cloud_text(self, prompt: str) -> str:
-        """Send text-only request to cloud API."""
+        """Send text-only request to OpenAI-compatible MaaS endpoint."""
         if self._cloud_client is None:
             self._cloud_client = httpx.AsyncClient(
-                base_url="https://dashscope-intl.aliyuncs.com",
+                base_url=self.cloud_base_url,
                 headers={"Authorization": f"Bearer {self.cloud_api_key}"},
                 timeout=httpx.Timeout(self.timeout),
             )
 
         payload = {
             "model": self.cloud_model,
-            "input": {
-                "messages": [
-                    {"role": "user", "content": prompt}
-                ]
-            },
-            "parameters": {"result_format": "text"},
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 300,
         }
 
-        resp = await self._cloud_client.post(
-            "/compatible-mode/v1/chat/completions",
-            json=payload,
-        )
+        resp = await self._cloud_client.post("/chat/completions", json=payload)
         resp.raise_for_status()
         data = resp.json()
-        return data["output"]["choices"][0]["message"]["content"]
+        return data["choices"][0]["message"]["content"]
 
     # ── Internal: Response parsing ────────────────────────────────
 

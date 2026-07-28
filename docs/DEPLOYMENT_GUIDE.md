@@ -35,49 +35,51 @@ MacBook USB-C ←── Poly Sync 20
 ### A.2 安装依赖
 
 ```bash
-cd ~/workspace/english-tutor   # 或你 clone 代码的目录
+cd ~/workspace/english-tutor
 
 # 创建虚拟环境
 python3 -m venv ~/camera-tutor-env
 source ~/camera-tutor-env/bin/activate
 
-# 安装依赖
-brew install portaudio    # Mac only — skip on Linux
+# Mac 需要 portaudio（PyAudio 的底层 C 库，用来操作麦克风和音箱）
+# Linux 跳过这步
+brew install portaudio
+
+# 一条命令装完所有 Python 依赖
 pip install -r requirements.txt
 ```
+
+> **portaudio 是什么？** PyAudio 需要它。装一次就行，之后 pip 就能编译 pyaudio。Linux 上 `sudo apt install portaudio19-dev` 代替 brew。
 
 ### A.3 验证设备
 
 ```bash
-# 摄像头 — 应显示 CAM OK
+# 摄像头
 python3 -c "import cv2; cap=cv2.VideoCapture(0); ret,_=cap.read(); print('✅ CAM OK' if ret else '❌ CAM FAIL')"
 
-# 麦克风 — 应显示 Poly Sync 20
+# 麦克风
 python3 -c "import pyaudio; p=pyaudio.PyAudio(); print(p.get_default_input_device_info()['name'])"
 
-# 音箱 — 应听到"嘀"一声
+# 音箱 (Mac)
 python3 -c "import os; os.system('afplay /System/Library/Sounds/Ping.aiff')"
+# 音箱 (Linux): speaker-test -t sine -f 440 -l 1
 ```
 
 三条都绿 → 进入下一步。
 
-### A.4 申请 DashScope API Key（免费）
+### A.4 申请 API Key（免费）
 
-```bash
-# 1. 打开 https://dashscope.console.aliyun.com
-# 2. 注册/登录阿里云账号
-# 3. 开通"模型服务灵积" → 获取 API Key
-# 4. 新用户赠送几十万 token 免费额度
-```
+1. 打开 [dashscope.console.aliyun.com](https://dashscope.console.aliyun.com)
+2. 注册/登录 → 开通百炼 → 获取 API Key
+3. 新用户送几十万 token 免费额度，够开发测试一个月
 
-### A.5 配置环境变量
+### A.5 配置 .env
 
 ```bash
 cd ~/workspace/english-tutor
 cat > .env << 'EOF'
-DASHSCOPE_API_KEY=sk-xxxxxxxxxxxxxxxxxxxx
-OMNI_LOCAL_URL=http://localhost:8100
-CAMERA_TUTOR_DATA_DIR=~/.camera-tutor-data
+DASHSCOPE_API_KEY=你的API-Key
+LLM_BASE_URL=https://你的实例ID.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
 EOF
 ```
 

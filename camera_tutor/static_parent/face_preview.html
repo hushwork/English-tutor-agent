@@ -194,27 +194,24 @@ function sayWord() {
   document.getElementById('textInput').addEventListener('keydown', e => { if(e.key==='Enter') sayWord(); });
 })();
 
-// ── Auto-poll from realtime conversation ──
-async function pollFace() {
-  try {
-    const resp = await fetch('/api/emma/face');
-    const data = await resp.json();
-    if (data.transcript && data.mouth_open !== undefined) {
+// ── WebSocket live face from realtime conversation ──
+let ws = null;
+function connectWS() {
+  const protocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
+  ws = new WebSocket(protocol + location.host + '/ws/emma/face');
+  ws.onmessage = function(event) {
+    const data = JSON.parse(event.data);
+    if (data.mouth_open !== undefined) {
       renderFace(data);
-      document.getElementById('status').textContent = '💬 ' + data.transcript;
+      document.getElementById('status').textContent = data.transcript ? '💬 ' + data.transcript : '🟢 Live — Emma is listening...';
       document.getElementById('mouthVal').textContent = data.mouth_open.toFixed(2);
       document.getElementById('tongueVal').textContent = data.tongue_visible.toFixed(2);
     }
-  } catch(e) {}
+  };
+  ws.onclose = function() { setTimeout(connectWS, 2000); };  // reconnect
+  ws.onerror = function() { ws.close(); };
 }
-
-// Check for auto-poll mode: ?live or auto if no button clicks
-let lastClick = Date.now();
-document.addEventListener('click', () => { lastClick = Date.now(); });
-setInterval(() => {
-  if (Date.now() - lastClick > 5000) { pollFace(); }  // Auto-poll after 5s idle
-}, 500);
-pollFace();
+connectWS();
 </script>
 </body>
 </html>

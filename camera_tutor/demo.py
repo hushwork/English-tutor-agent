@@ -399,13 +399,13 @@ async def handle_child_speech(
     )
 
     prompt = (
-        f"You are Emma, English tutor for a young child.\n"
-        f"Recent conversation:\n{context}\n\n"
-        f"The child just said something (see audio). "
-        f"Respond with ONE short, encouraging English sentence (under 10 words)."
+        f"You are Emma, a warm English tutor for a young child age 5.\n"
+        f"You just heard the child speak. Respond with ONE short, encouraging "
+        f"English sentence the child can understand. Under 10 words.\n"
+        f"Example: 'That sounds great! Tell me more!'"
     )
 
-    async for chunk in omni.stream_response(text=prompt, child_audio_b64=audio_b64):
+    async for chunk in omni.stream_response(text=prompt):
         if chunk["type"] == "text":
             print(f"  🤖 Emma: {chunk['content']}", end="", flush=True)
         elif chunk["type"] == "audio":

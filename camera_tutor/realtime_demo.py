@@ -17,10 +17,13 @@ import threading
 import time
 import base64
 import sys
+import cv2
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from camera_tutor.tutor_personas import get_active_tutor
+from camera_tutor.camera import CameraPipeline
+from _thread import interrupt_main
 
 # ── Audio setup ──────────────────────────────────────────────────
 
@@ -70,6 +73,16 @@ spk = pa.open(format=pyaudio.paInt16, channels=1, rate=RATE_SPK, output=True)
 
 print(f"   Mic: device {mic_index}")
 print(f"   Model: {MODEL}")
+
+# 启动摄像头（1 fps，场景变化时才上传）
+camera = CameraPipeline(camera_id=0, fps=1, resolution=(640, 480),
+                        scene_change_threshold=0.40, key_frame_min_interval=1.0)
+try:
+    camera.start()
+    print("   Camera: ✅")
+except Exception as e:
+    print(f"   Camera: ❌ ({e})")
+    camera = None
 print()
 
 # ── WebSocket callbacks ─────────────────────────────────────────
@@ -115,6 +128,26 @@ def on_open(ws):
             except Exception:
                 break
     threading.Thread(target=send_audio, daemon=True).start()
+
+    # 启动摄像头发送线程（1 fps，场景变化时上传）
+    if camera:
+        def send_camera():
+            last_frame = None
+            while _running:
+                try:
+                    frame = camera.get_latest_frame()
+                    if frame and (last_frame is None or frame.is_key_frame):
+                        jpg = cv2.imencode('.jpg', frame.image, [cv2.IMWRITE_JPEG_QUALITY, 60])[1]
+                        b64 = base64.b64encode(jpg).decode()
+                        ws.send(json.dumps({
+                            "type": "input_image_buffer.append",
+                            "image": b64
+                        }))
+                        last_frame = frame
+                except Exception:
+                    pass
+                time.sleep(1.0)
+        threading.Thread(target=send_camera, daemon=True).start()
 
 def on_message(ws, message):
     try:
@@ -179,6 +212,8 @@ except KeyboardInterrupt:
     print("\n\n👋 再见！")
 finally:
     _running = False
+    if camera:
+        camera.stop()
     mic.close()
     spk.close()
     pa.terminate()

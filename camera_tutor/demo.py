@@ -388,44 +388,13 @@ async def handle_child_speech(
     child_audio, capture, playback, omni, history, reporter,
 ):
     """Process a child's speech segment and get Emma's response."""
-    from camera_tutor.audio_io import AudioCapture
-    audio_b64 = AudioCapture.to_wav_base64(child_audio)
-    print("  🎤 Captured child speech, thinking...")
-
-    # Build prompt with conversation context
-    context = "\n".join(
-        f"{'Emma' if h['role']=='emma' else 'Child'}: {h['content'][:80]}"
-        for h in history[-4:]
-    )
-
+    print("  🤖 Emma is thinking...")
     prompt = (
-        f"You are Emma, a warm English tutor for a young child age 5.\n"
-        f"You just heard the child speak. Respond with ONE short, encouraging "
-        f"English sentence the child can understand. Under 10 words.\n"
-        f"Example: 'That sounds great! Tell me more!'"
+        "You are Emma, a warm English tutor for a 5-year-old child. "
+        "Respond with ONE short encouraging English sentence, under 10 words."
     )
-
-    print(f"  [DEBUG] Calling Qwen-Omni...")
-    try:
-        async for chunk in omni.stream_response(text=prompt):
-            if chunk["type"] == "text":
-                print(f"  🤖 Emma: {chunk['content']}", end="", flush=True)
-            elif chunk["type"] == "audio":
-                import numpy as np
-                audio_np = np.frombuffer(chunk["content"], dtype=np.int16).astype(np.float32) / 32767.0
-                playback.enqueue(audio_np)
-            elif chunk["type"] == "done":
-                print()
-                break
-    except Exception as e:
-        print(f"  [ERROR] {e}")
-
-    reporter.log_event("child_spoke")
-    reporter.log_event("interaction_end")
-
-
-# ── Main ────────────────────────────────────────────────────────
-
+    response = await omni._call_cloud_text(prompt)
+    print(f"  🤖 Emma: {response}")
 def main():
     from camera_tutor.tutor_personas import list_tutors, set_active_tutor, get_active_tutor
 

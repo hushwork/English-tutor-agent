@@ -389,14 +389,28 @@ class AudioCapture:
         # Try Silero first (best accuracy)
         try:
             import torch
-            model, utils = torch.hub.load(
-                'snakers4/silero-vad', 'silero_vad',
-                force_reload=False, onnx=False,
-            )
+            import os
+            
+            # Try local file first (no download needed)
+            local_paths = [
+                os.path.expanduser("~/Downloads/silero-vad/snakers4-silero-vad-76e3dc4/src/silero_vad/data/silero_vad.jit"),
+                os.path.expanduser("~/.cache/torch/hub/snakers4_silero-vad_master/src/silero_vad/data/silero_vad.jit"),
+            ]
+            model = None
+            for lp in local_paths:
+                if os.path.exists(lp):
+                    model = torch.jit.load(lp)
+                    print("[INFO] VAD: Silero (local)")
+                    break
+            
+            if model is None:
+                model, utils = torch.hub.load(
+                    'snakers4/silero-vad', 'silero_vad',
+                    force_reload=False, onnx=False,
+                )
+            
             self._vad_model = model
-            self._vad_utils = utils
             self._vad_backend = "silero"
-            print("[INFO] VAD: Silero (torch)")
             return
         except Exception:
             pass

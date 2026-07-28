@@ -147,7 +147,7 @@ def on_open(ws):
                                 "image": b64
                             }))
                             last_frame = frame
-                            time.sleep(0.3)  # 动态场景：3fps
+                            time.sleep(1.0)  # 动态场景：1fps（建议值）
                         else:
                             still_count += 1
                             if still_count >= 15:  # 15秒无变化时刷新  # 15秒无变化时刷新

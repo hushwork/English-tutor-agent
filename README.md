@@ -492,6 +492,48 @@ This means the LLM didn't return valid JSON. The system has a multi-layer fallba
 - [Immersion vs. Watching Movies](docs/PRODUCT_DOC.md#immersion-vs-watching-movies) — why Netflix isn't a replacement for structured input
 - [What Should You Feel After Immersion?](docs/PRODUCT_DOC.md#what-should-you-feel-after-immersion) — how to know if you're doing it right
 
+## Camera Tutor — AI 幼儿英语环境家教
+
+> 不再需要屏幕。一个摄像头放在孩子房间，用英语观察、陪伴、教导。
+
+Camera Tutor 是 English Tutor 的自然演化——从成人自学 CLI 工具，演化为**基于环境感知摄像头的 AI 英语家教**。核心架构：**Qwen-Omni-Realtime**（WebSocket 实时多模态对话）。
+
+### 快速运行
+
+```bash
+# 实时对话（WebSocket + 服务端 VAD + 语音输出）
+python3 camera_tutor/realtime_demo.py
+
+# 家长 Dashboard（可选）
+python3 camera_tutor/dashboard_server.py
+# 浏览器访问 http://localhost:8200
+
+# Emma 面部动画
+# http://localhost:8200/static/emma_face.html
+```
+
+### 核心模块
+
+| 模块 | 功能 |
+|------|------|
+| `realtime_demo.py` | WebSocket 实时语音对话（服务端 VAD、打断、摄像头画面上传）|
+| `dashboard_server.py` | 家长 Dashboard + WebSocket 面部同步 |
+| `avatar.py` | 22 视位标准、发音教学、LLM 对齐 |
+| `tutor_personas.py` | 5 个教师角色（Emma/Serena/Bella/Sophie/Olivia）|
+| `audio_io.py` | VAD、音频流、可打断播放 |
+| `camera.py` | pHash 场景变化检测、自适应帧率 |
+| `omni_client.py` | Qwen-Omni 双后端（本地 + 云端）|
+
+### 硬件最低投入
+
+| 设备 | 型号 | 价格 |
+|------|------|------|
+| 摄像头 | Logitech Brio 100 | ¥200 |
+| 麦克风+音箱 | Poly Sync 20 | ¥160 |
+| 算力 | MacBook + 云端 API | ¥0（已有设备 + 免费额度）|
+
+详细部署文档：`docs/DEPLOYMENT_GUIDE.md`
+
 ---
 
 ## License

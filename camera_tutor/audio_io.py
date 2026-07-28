@@ -513,7 +513,12 @@ class AudioCapture:
 
         try:
             prob = self._vad_model(tensor, 16000).item()
-            return prob > self.vad_threshold
+            is_speech = prob > self.vad_threshold
+            # Debug: show VAD when speech-to-silence or silence-to-speech
+            if hasattr(self, '_last_vad_prob') and abs(prob - self._last_vad_prob) > 0.4:
+                print(f"  [VAD] {prob:.2f} {'🔊' if is_speech else '🔇'}")
+            self._last_vad_prob = prob
+            return is_speech
         except Exception:
             return True
 

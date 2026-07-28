@@ -34,12 +34,15 @@ async def run_mock():
         DecisionEngine, ChildActivity, ChildMood, ChildState,
     )
     from camera_tutor.dialogue import EmmaDialogue
+    from camera_tutor.tutor_personas import get_active_tutor
 
     engine = DecisionEngine()
     dialogue = EmmaDialogue(child_age=5)
+    tutor = get_active_tutor()
 
     print("=" * 60)
-    print("  Camera Tutor — Mock Interactive Demo")
+    print(f"  Camera Tutor — Mock Interactive Demo")
+    print(f"  Tutor: {tutor.emoji} {tutor.name} ({tutor.voice}) — {tutor.teaching_style}")
     print("=" * 60)
     print("  Type what the child says (or 'q' to quit)")
     print("  Type 'stop' to interrupt Emma mid-response")
@@ -175,7 +178,14 @@ async def run_hardware():
     from camera_tutor.parent_report import ParentReportEngine
 
     print("=" * 60)
+    from camera_tutor.tutor_personas import get_active_tutor
+
+    print("=" * 60)
     print("  Camera Tutor — Real-time Interactive Demo")
+    tutor = get_active_tutor()
+    print(f"\n  Tutor: {tutor.emoji} {tutor.name} | Voice: {tutor.voice} | Style: {tutor.teaching_style}")
+    print(f"  Ages: {tutor.child_age_min}-{tutor.child_age_max} | {tutor.description_cn}")
+
     print("=" * 60)
 
     # ── Init hardware ────────────────────────────────────────
@@ -370,10 +380,28 @@ async def handle_child_speech(
 # ── Main ────────────────────────────────────────────────────────
 
 def main():
+    from camera_tutor.tutor_personas import list_tutors, set_active_tutor, get_active_tutor
+
     parser = argparse.ArgumentParser(description="Camera Tutor Real-time Demo")
     parser.add_argument("--mock", action="store_true",
                         help="Text-based mock (no hardware needed)")
+    parser.add_argument("--tutor", type=str, default=None,
+                        help="Select tutor: emma, serena, bella, sophie, olivia")
+    parser.add_argument("--list-tutors", action="store_true",
+                        help="List available tutors and exit")
     args = parser.parse_args()
+
+    if args.list_tutors:
+        print("Available tutors:")
+        for t in list_tutors():
+            active = " <-- current" if get_active_tutor().id == t.id else ""
+            print(f"  {t.emoji} {t.name:8s} voice={t.voice:8s} style={t.teaching_style:10s} ages {t.child_age_min}-{t.child_age_max}")
+            print(f"    {t.description_cn}{active}\n")
+        return
+
+    if args.tutor:
+        set_active_tutor(args.tutor)
+        print(f"Tutor set to: {get_active_tutor().emoji} {get_active_tutor().name}\n")
 
     if args.mock:
         asyncio.run(run_mock())

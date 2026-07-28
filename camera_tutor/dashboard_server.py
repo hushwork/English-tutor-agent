@@ -54,6 +54,11 @@ sr = SpacedRepetition(storage_dir=Path(__file__).resolve().parent.parent / ".cam
 memory = ConversationMemory(storage_dir=Path(__file__).resolve().parent.parent / ".camera-tutor-data")
 decision_engine = DecisionEngine()
 
+# Tutor personas
+from camera_tutor.tutor_personas import (
+    list_tutors, get_active_tutor, set_active_tutor, get_child_age, set_child_age,
+)
+
 # Device state (would be connected to real device in production)
 _device_state = {
     "camera_connected": False,
@@ -226,6 +231,68 @@ async def get_highlights(limit: int = 5):
     """Get recent 'wow moments' — times the child spoke English."""
     report = report_engine.generate_daily_report()
     return {"highlights": report.highlights[:limit]}
+
+
+
+# ── Tutor Persona API ─────────────────────────────────────────
+
+@app.get("/api/tutor/list")
+async def api_list_tutors():
+    """Get all available tutor personas."""
+    tutors = []
+    active = get_active_tutor()
+    for t in list_tutors():
+        tutors.append({
+            "id": t.id,
+            "name": t.name,
+            "emoji": t.emoji,
+            "voice": t.voice,
+            "description_cn": t.description_cn,
+            "description_en": t.description_en,
+            "teaching_style": t.teaching_style,
+            "child_age_min": t.child_age_min,
+            "child_age_max": t.child_age_max,
+            "personality_traits": t.personality_traits,
+            "age_appearance": t.age_appearance,
+            "active": t.id == active.id,
+        })
+    return {"tutors": tutors}
+
+
+@app.get("/api/tutor/active")
+async def api_get_active_tutor():
+    """Get the currently active tutor."""
+    t = get_active_tutor()
+    return {
+        "id": t.id, "name": t.name, "emoji": t.emoji,
+        "voice": t.voice, "teaching_style": t.teaching_style,
+        "description_cn": t.description_cn,
+    }
+
+
+@app.post("/api/tutor/select")
+async def api_select_tutor(tutor_id: str = Query(...)):
+    """Switch to a different tutor persona."""
+    from camera_tutor.tutor_personas import TUTOR_LIBRARY
+    if tutor_id not in TUTOR_LIBRARY:
+        raise HTTPException(status_code=404, detail=f"Unknown tutor: {tutor_id}")
+    set_active_tutor(tutor_id)
+    t = get_active_tutor()
+    return {"success": True, "tutor": {"id": t.id, "name": t.name, "emoji": t.emoji}}
+
+
+@app.get("/api/tutor/child-age")
+async def api_get_child_age():
+    """Get configured child age."""
+    return {"age": get_child_age()}
+
+
+@app.post("/api/tutor/child-age")
+async def api_set_child_age(age: int = Query(ge=1, le=18)):
+    """Set child's age."""
+    set_child_age(age)
+    return {"success": True, "age": age}
+
 
 
 # ── Health Check ────────────────────────────────────────────────

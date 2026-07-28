@@ -42,11 +42,8 @@ python3 -m venv ~/camera-tutor-env
 source ~/camera-tutor-env/bin/activate
 
 # 安装依赖
+brew install portaudio    # Mac only — skip on Linux
 pip install -r requirements.txt
-pip install fastapi uvicorn httpx python-dotenv pyaudio numpy opencv-python
-
-# Mac 上 PyAudio 可能需要 portaudio
-# 如果报错: brew install portaudio && pip install pyaudio
 ```
 
 ### A.3 验证设备

@@ -242,6 +242,7 @@
 <div class="tab-bar">
   <button class="active" data-tab="today">Today</button>
   <button data-tab="words">Words</button>
+  <button data-tab="tutor">Tutor</button>
   <button data-tab="device">Device</button>
 </div>
 
@@ -324,6 +325,41 @@
       </div>
     </div>
   </div>
+
+  <!-- Tutor Tab -->
+  <div class="tab-content" id="tab-tutor">
+    <div class="section">
+      <h3>👩‍🏫 Current Tutor</h3>
+      <div id="currentTutor" style="text-align:center;padding:16px">
+        <div style="font-size:48px" id="tutorEmoji">👩‍🏫</div>
+        <div style="font-size:20px;font-weight:700;margin:8px 0" id="tutorName">Emma</div>
+        <div style="font-size:13px;color:var(--text2)" id="tutorDesc">Loading...</div>
+        <div style="margin-top:8px">
+          <span class="status-chip" id="tutorVoice">Voice: Cherry</span>
+          <span class="status-chip" id="tutorStyle">Style: warm</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>🔄 Choose a Tutor</h3>
+      <div id="tutorOptions" style="display:flex;flex-direction:column;gap:8px">
+        <div class="loading">Loading tutors...</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>👶 Child Age</h3>
+      <div class="settings-row">
+        <span class="label">Child's age</span>
+        <input type="range" min="2" max="14" value="5" id="childAgeSlider" style="width:120px">
+        <span class="value" id="childAgeVal">5</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Device Tab -->
+  <div class="tab-content" id="tab-device">
 
   <!-- Device Tab -->
   <div class="tab-content" id="tab-device">
@@ -520,9 +556,71 @@ function activityIcon(a) {
   return icons[a] || '📍';
 }
 
+// ── Tutor Selection ──────────────────────────────────────────
+async function loadTutors() {
+  try {
+    const resp = await fetch('/api/tutor/list');
+    const data = await resp.json();
+    const tutors = data.tutors;
+    
+    // Current tutor
+    const active = tutors.find(t => t.active) || tutors[0];
+    document.getElementById('tutorEmoji').textContent = active.emoji;
+    document.getElementById('tutorName').textContent = active.name;
+    document.getElementById('tutorDesc').textContent = active.description_cn;
+    document.getElementById('tutorVoice').textContent = 'Voice: ' + active.voice;
+    document.getElementById('tutorStyle').textContent = 'Style: ' + active.teaching_style;
+
+    // Tutor options
+    const container = document.getElementById('tutorOptions');
+    container.innerHTML = tutors.map(t => `
+      <div onclick="selectTutor('${t.id}')" style="
+        background:${t.active?'var(--surface2)':'var(--surface)'};
+        border-radius:8px;padding:12px;cursor:pointer;
+        display:flex;align-items:center;gap:12px;
+        border:2px solid ${t.active?'var(--accent)':'transparent'};
+        transition:all 0.2s;
+      ">
+        <span style="font-size:32px">${t.emoji}</span>
+        <div style="flex:1">
+          <div style="font-weight:700">${t.name} <span style="font-weight:400;font-size:11px;color:var(--text2)">voice: ${t.voice}</span></div>
+          <div style="font-size:11px;color:var(--text2)">${t.description_cn}</div>
+          <div style="font-size:10px;color:var(--text2);margin-top:2px">Ages ${t.child_age_min}-${t.child_age_max} · ${t.teaching_style} · ${t.personality_traits.slice(0,3).join(', ')}</div>
+        </div>
+        ${t.active ? '<span style="color:var(--accent2);font-size:20px">✓</span>' : ''}
+      </div>
+    `).join('');
+  } catch(e) { console.error('Failed to load tutors:', e); }
+}
+
+async function selectTutor(id) {
+  try {
+    await fetch('/api/tutor/select?tutor_id=' + id, {method:'POST'});
+    loadTutors();
+  } catch(e) { console.error('Failed to select tutor:', e); }
+}
+
+// Child age slider
+document.getElementById('childAgeSlider').addEventListener('input', async function() {
+  document.getElementById('childAgeVal').textContent = this.value;
+  await fetch('/api/tutor/child-age?age=' + this.value, {method:'POST'});
+});
+
+// Load child age
+async function loadChildAge() {
+  try {
+    const resp = await fetch('/api/tutor/child-age');
+    const data = await resp.json();
+    document.getElementById('childAgeSlider').value = data.age;
+    document.getElementById('childAgeVal').textContent = data.age;
+  } catch(e) {}
+}
+
 // ── Init ───────────────────────────────────────────────────────
 loadToday();
 loadDeviceStatus();
+loadTutors();
+loadChildAge();
 </script>
 </body>
 </html>

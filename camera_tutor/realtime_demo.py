@@ -120,7 +120,7 @@ def on_open(ws):
             "input_audio_format": "pcm",
             "output_audio_format": "pcm",
             "turn_detection": {
-                "type": "server_vad",
+                "type": "semantic_vad",
                 "threshold": 0.5,
                 "silence_duration_ms": 600,
             },
@@ -209,10 +209,11 @@ def on_message(ws, message):
                 pass
 
     elif event_type == "conversation.item.input_audio_transcription.completed":
-        # 孩子说了什么 — 显示文字
         child_text = event.get("transcript", "")
         if child_text:
             print(f"  👧 Child: {child_text}")
+            import time as _tm
+            _last_audio_time[0] = _tm.time()
 
     elif event_type == "error":
         err = event.get("error", {})

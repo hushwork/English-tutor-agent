@@ -195,19 +195,30 @@ async def run_hardware():
     print("       ✅ Ready")
 
     print("[2/6] Microphone (VAD always on)...")
-    # Use Jabra headset mic by default (clearer than camera mic)
-    jabra_device = None
+    # Auto-detect mic: Brio built-in first, then Jabra
+    mic_device = None
     try:
         import pyaudio
         p = pyaudio.PyAudio()
         for i in range(p.get_device_count()):
-            if 'Jabra' in p.get_device_info_by_index(i)['name'] and p.get_device_info_by_index(i)['maxInputChannels'] > 0:
-                jabra_device = i
-                print(f"[MIC] Using Jabra device {i}")
-                break
+            name = p.get_device_info_by_index(i)['name']
+            ch = p.get_device_info_by_index(i)['maxInputChannels']
+            if ch > 0:
+                if 'Brio' in name:
+                    mic_device = i
+                    print(f"[MIC] Brio 90: {name} (index {i})")
+                    break
+        if mic_device is None:
+            for i in range(p.get_device_count()):
+                name = p.get_device_info_by_index(i)['name']
+                ch = p.get_device_info_by_index(i)['maxInputChannels']
+                if ch > 0 and 'Jabra' in name and 'mono' in name:
+                    mic_device = i
+                    print(f"[MIC] Jabra: {name} (index {i})")
+                    break
         p.terminate()
     except: pass
-    capture = AudioCapture(sample_rate=16000, chunk_duration=0.05, vad_threshold=0.3, device_index=jabra_device)
+    capture = AudioCapture(sample_rate=16000, chunk_duration=0.05, vad_threshold=0.3, device_index=mic_device)
     capture.start()
     print("       ✅ Ready — VAD listening")
 

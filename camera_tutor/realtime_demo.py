@@ -78,6 +78,13 @@ spk = pa.open(format=pyaudio.paInt16, channels=1, rate=RATE_SPK, output=True)
 print(f"   Mic: device {mic_index}")
 print(f"   Model: {MODEL}")
 
+# 清空上次的嘴型状态
+try:
+    import httpx
+    httpx.post("http://localhost:8200/api/emma/face/reset", timeout=1)
+except:
+    pass
+
 # 启动摄像头（1 fps，场景变化时才上传）
 camera = CameraPipeline(camera_id=0, fps=1, resolution=(224, 224),
                         scene_change_threshold=0.20, key_frame_min_interval=1.0)

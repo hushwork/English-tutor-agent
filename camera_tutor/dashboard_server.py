@@ -305,6 +305,14 @@ async def api_set_child_age(age: int = Query(ge=1, le=18)):
 _emma_face = {"viseme": "rest", "mouth_open": 0.0, "tongue_visible": 0.0, "transcript": ""}
 _face_clients: set[WebSocket] = set()
 
+@app.post("/api/emma/face/reset")
+async def reset_emma_face():
+    """Reset face state (call at realtime_demo startup)."""
+    _emma_face.update({"viseme": "rest", "mouth_open": 0.0, "tongue_visible": 0.0, "transcript": ""})
+    import asyncio
+    asyncio.create_task(_broadcast_face())
+    return {"ok": True}
+
 @app.websocket("/ws/emma/face")
 async def ws_emma_face(websocket: WebSocket):
     await websocket.accept()

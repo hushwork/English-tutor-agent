@@ -190,7 +190,7 @@ async def run_hardware():
 
     # ── Init hardware ────────────────────────────────────────
     print("\n[1/6] Camera...")
-    camera = CameraPipeline(camera_id=0, fps=1, resolution=(640, 480), scene_change_threshold=0.20, key_frame_min_interval=3.0)
+    camera = CameraPipeline(camera_id=0, fps=1, resolution=(640, 480), scene_change_threshold=0.40, key_frame_min_interval=5.0)
     camera.start()
     print("       ✅ Ready")
 
@@ -261,6 +261,19 @@ async def run_hardware():
 
     try:
         while True:
+            # ── Step 0: Listen for speech (runs EVERY cycle) ──
+            chunk = capture.read_chunk()
+            if chunk and chunk.is_speech and not playback.is_playing:
+                print("[VAD] Speech detected — capturing...")
+                segment = capture.read_speech_segment(timeout=5.0)
+                if segment:
+                    await handle_child_speech(segment, capture, playback, omni, history, reporter)
+                    continue  # Go back to listening
+
+            if playback.is_playing:
+                await asyncio.sleep(0.1)
+                continue
+
             # ── Step 1: Observe scene ─────────────────────────
             frame = camera.capture()
             if frame is None:
@@ -269,13 +282,6 @@ async def run_hardware():
 
             # Only process key frames (scene changed meaningfully)
             if not frame.is_key_frame:
-                # Still check VAD while waiting
-                if capture.is_speaking and not playback.is_playing:
-                    print("[VAD] Speech detected!")
-                    child_audio = capture.read_speech_segment(timeout=3.0)
-                    if child_audio:
-                        print("\n👧 Child is speaking...")
-                        await handle_child_speech(child_audio, capture, playback, omni, history, reporter)
                 await asyncio.sleep(0.5)
                 continue
 

@@ -226,6 +226,12 @@ print("  Camera Tutor — 实时语音对话")
 print("  (WebSocket · 服务端 VAD · 实时打断)")
 print("=" * 55)
 print()
+try:
+    import webbrowser
+    webbrowser.open("http://localhost:8200/static/face_preview.html")
+    print("   \U0001f517 \u5df2\u6253\u5f00 Emma \u8138\u90e8\u9875\u9762")
+except:
+    print("   \U0001f517 \u6253\u5f00 http://localhost:8200/static/face_preview.html \u67e5\u770b Emma \u5634\u578b")
 
 ws = websocket.WebSocketApp(
     WS_URL,

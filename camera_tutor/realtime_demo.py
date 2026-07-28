@@ -26,6 +26,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from camera_tutor.tutor_personas import get_active_tutor
 from camera_tutor.camera import CameraPipeline
+from camera_tutor.avatar import EmmaAvatar, Viseme
 from _thread import interrupt_main
 
 # ── Audio setup ──────────────────────────────────────────────────

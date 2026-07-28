@@ -115,7 +115,7 @@ def on_open(ws):
         "type": "session.update",
         "session": {
             "modalities": ["text", "audio"],
-            "voice": tutor.voice if tutor.voice in ("Cherry", "Serena") else "Cherry",
+            "voice": "Tina",
             "instructions": tutor.system_prompt_guidance(),
             "input_audio_format": "pcm",
             "output_audio_format": "pcm",

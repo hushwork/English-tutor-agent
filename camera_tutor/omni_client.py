@@ -260,7 +260,7 @@ class OmniClient:
     async def _stream_cloud(
         self, text: str, image_b64: str, audio_b64: str
     ) -> AsyncIterator[dict]:
-        """Stream from cloud DashScope Qwen-Omni API."""
+        """Stream from cloud DashScope Qwen-Omni API (OpenAI-compatible)."""
         if self._cloud_client is None:
             self._cloud_client = httpx.AsyncClient(
                 base_url=self.cloud_base_url,
@@ -268,22 +268,29 @@ class OmniClient:
                 timeout=httpx.Timeout(self.timeout),
             )
 
-        content_parts: list[dict] = [{"text": text}]
+        # Build messages content
+        content_parts: list[dict] = []
         if image_b64:
-            content_parts.insert(0, {"image": f"data:image/jpeg;base64,{image_b64}"})
-        if audio_b64:
-            content_parts.insert(0, {"audio": f"data:audio/wav;base64,{audio_b64}"})
+            content_parts.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}
+            })
+        # TODO: audio input support once MaaS API supports it
+        # if audio_b64:
+        #     content_parts.append({
+        #         "type": "input_audio",
+        #         "input_audio": {"data": audio_b64, "format": "wav"}
+        #     })
+        content_parts.append({"type": "text", "text": text})
 
         payload = {
             "model": self.cloud_model,
-            "input": {
-                "messages": [{"role": "user", "content": content_parts}]
-            },
-            "parameters": {
-                "result_format": "json",
-                "stream": True,
-                "modalities": ["text", "audio"],
-            },
+            "messages": [{"role": "user", "content": content_parts}],
+            "max_tokens": 200,
+            "modalities": ["text", "audio"],
+            "audio": {"voice": "Cherry", "format": "wav"},
+            "stream": True,
+            "stream_options": {"include_usage": True},
         }
 
         try:
@@ -300,12 +307,14 @@ class OmniClient:
                         break
 
                     try:
-                        event = json.loads(data_str)
+                        chunk = json.loads(data_str)
                     except json.JSONDecodeError:
                         continue
 
-                    choice = event.get("output", {}).get("choices", [{}])[0]
-                    delta = choice.get("delta", {})
+                    choices = chunk.get("choices", [])
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta", {})
 
                     if "content" in delta:
                         yield {"type": "text", "content": delta["content"]}

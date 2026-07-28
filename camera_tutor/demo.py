@@ -190,7 +190,7 @@ async def run_hardware():
 
     # ── Init hardware ────────────────────────────────────────
     print("\n[1/6] Camera...")
-    camera = CameraPipeline(camera_id=0, fps=1, resolution=(640, 480), scene_change_threshold=0.25, key_frame_min_interval=10.0)
+    camera = CameraPipeline(camera_id=0, fps=1, resolution=(640, 480), scene_change_threshold=0.20, key_frame_min_interval=3.0)
     camera.start()
     print("       ✅ Ready")
 
@@ -203,6 +203,7 @@ async def run_hardware():
         for i in range(p.get_device_count()):
             if 'Jabra' in p.get_device_info_by_index(i)['name'] and p.get_device_info_by_index(i)['maxInputChannels'] > 0:
                 jabra_device = i
+                print(f"[MIC] Using Jabra device {i}")
                 break
         p.terminate()
     except: pass
@@ -248,6 +249,7 @@ async def run_hardware():
             if not frame.is_key_frame:
                 # Still check VAD while waiting
                 if capture.is_speaking and not playback.is_playing:
+                        print("[VAD] Speech detected!")
                     child_audio = capture.read_speech_segment(timeout=3.0)
                     if child_audio:
                         print("\n👧 Child is speaking...")
@@ -333,6 +335,7 @@ async def run_hardware():
             else:
                 # Emma stays silent. Check if child is speaking anyway.
                 if capture.is_speaking and not playback.is_playing:
+                        print("[VAD] Speech detected!")
                     child_audio = capture.read_speech_segment(timeout=3.0)
                     if child_audio:
                         print("\n👧 Child spoke (unsolicited)")

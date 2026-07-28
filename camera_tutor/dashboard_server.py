@@ -335,7 +335,7 @@ async def _broadcast_face():
         except Exception as e:
             print(f"[BROADCAST ERROR] {e}")
             dead.add(ws)
-    _face_clients -= dead
+    _face_clients.difference_update(dead)
     print(f"[BROADCAST] to {len(_face_clients)} clients: {_emma_face.get('transcript','')[:30]}")
 
 @app.get("/api/emma/face")

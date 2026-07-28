@@ -76,7 +76,7 @@ print(f"   Model: {MODEL}")
 
 # 启动摄像头（1 fps，场景变化时才上传）
 camera = CameraPipeline(camera_id=0, fps=1, resolution=(224, 224),
-                        scene_change_threshold=0.40, key_frame_min_interval=1.0)
+                        scene_change_threshold=0.20, key_frame_min_interval=1.0)
 try:
     camera.start()
     print("   Camera: ✅")
@@ -150,8 +150,7 @@ def on_open(ws):
                             time.sleep(0.3)  # 动态场景：3fps
                         else:
                             still_count += 1
-                            # 每10秒发一次保活帧
-                            if still_count % 10 == 0:
+                            if still_count >= 15:  # 15秒无变化时刷新  # 15秒无变化时刷新
                                 jpg = cv2.imencode('.jpg', frame.image, [cv2.IMWRITE_JPEG_QUALITY, 40])[1]
                                 b64 = base64.b64encode(jpg).decode()
                                 ws.send(json.dumps({

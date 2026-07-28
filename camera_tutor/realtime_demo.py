@@ -129,35 +129,36 @@ def on_open(ws):
                 break
     threading.Thread(target=send_audio, daemon=True).start()
 
-    # 启动摄像头发送线程（自适应帧率：动态场景 3fps，静态场景 0.1fps）
+    # 启动摄像头发送线程（场景变化时 1fps，静止时每 15 秒 1 帧保活）
     if camera:
         def send_camera():
-            last_frame = None
-            still_count = 0
+            still_seconds = 0
             while _running:
                 try:
                     frame = camera.get_latest_frame()
                     if frame:
+                        # 场景变化 → 立即发
                         if frame.is_key_frame:
-                            still_count = 0
+                            still_seconds = 0
                             jpg = cv2.imencode('.jpg', frame.image, [cv2.IMWRITE_JPEG_QUALITY, 50])[1]
                             b64 = base64.b64encode(jpg).decode()
                             ws.send(json.dumps({
                                 "type": "input_image_buffer.append",
                                 "image": b64
                             }))
-                            last_frame = frame
-                            time.sleep(1.0)  # 动态场景：1fps（建议值）
+                            time.sleep(1.0)
                         else:
-                            still_count += 1
-                            if still_count >= 15:  # 15秒无变化时刷新  # 15秒无变化时刷新
+                            # 静止 → 每 15 秒发一帧保活
+                            still_seconds += 1
+                            if still_seconds >= 15:
+                                still_seconds = 0
                                 jpg = cv2.imencode('.jpg', frame.image, [cv2.IMWRITE_JPEG_QUALITY, 40])[1]
                                 b64 = base64.b64encode(jpg).decode()
                                 ws.send(json.dumps({
                                     "type": "input_image_buffer.append",
                                     "image": b64
                                 }))
-                            time.sleep(1.0)  # 静态场景：1fps
+                            time.sleep(1.0)
                 except Exception:
                     pass
         threading.Thread(target=send_camera, daemon=True).start()

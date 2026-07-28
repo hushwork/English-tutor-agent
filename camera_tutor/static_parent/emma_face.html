@@ -10,6 +10,9 @@
   canvas { width:360px; height:360px; border-radius:50%; background:linear-gradient(135deg,#1a1d27,#242836); }
   .param { display:flex; gap:16px; font-size:13px; color:#8b8fa3; }
   .status { font-size:14px; color:#8b8fa3; min-height:20px; }
+  .wss { width:8px; height:8px; border-radius:50%; display:inline-block; margin-right:6px; }
+  .wss.on { background:#4ecf8d; box-shadow:0 0 6px #4ecf8d; }
+  .wss.off { background:#ff5c6c; }
   .badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; margin:0 2px; background:#1a1d27; border:1px solid #2a2d3a; }
   .badge.high { border-color:#ff5c6c; color:#ff5c6c; }
 </style>
@@ -22,7 +25,7 @@
     <span>👅 <span id="tongueVal">0.0</span></span>
     <span id="visemeLabel" class="badge">sil</span>
   </div>
-  <div class="status" id="status">Waiting for Emma...</div>
+  <div class="status"><span class="wss off" id="wssDot"></span><span id="status">Connecting...</span></div>
 </div>
 
 <script>
@@ -121,21 +124,30 @@ let ws = null;
 function connectWS() {
   const p = location.protocol === 'https:' ? 'wss://' : 'ws://';
   ws = new WebSocket(p + location.host + '/ws/emma/face');
+  ws.onopen = function() {
+    document.getElementById('wssDot').className = 'wss on';
+    document.getElementById('status').textContent = '🟢 Connected — speak to Emma';
+  };
   ws.onmessage = function(event) {
     const d = JSON.parse(event.data);
+    document.getElementById('wssDot').className = 'wss on';
     if (d.mouth_open !== undefined) {
       target.mouthOpen   = d.mouth_open;
       target.tongue      = d.tongue_visible || 0;
       target.lipBite     = d.viseme === 'fv' ? 0.95 : 0;
       target.mouthWidth  = d.mouth_open > 0.5 ? 0.7 : 0.3;
-      document.getElementById('status').textContent = d.transcript ? '💬 ' + d.transcript : '🟢 Live';
+      document.getElementById('status').textContent = d.transcript ? '💬 ' + d.transcript : '🟢 Live — listening';
       document.getElementById('mouthVal').textContent = d.mouth_open.toFixed(2);
       document.getElementById('tongueVal').textContent = (d.tongue_visible||0).toFixed(2);
       document.getElementById('visemeLabel').textContent = d.viseme || '';
       document.getElementById('visemeLabel').className = 'badge' + ((d.viseme === 'th' || d.viseme === 'fv') ? ' high' : '');
     }
   };
-  ws.onclose = function() { setTimeout(connectWS, 2000); };
+  ws.onclose = function() {
+    document.getElementById('wssDot').className = 'wss off';
+    document.getElementById('status').textContent = '🔴 Disconnected — retrying...';
+    setTimeout(connectWS, 2000);
+  };
 }
 connectWS();
 </script>

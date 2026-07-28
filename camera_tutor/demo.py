@@ -204,7 +204,7 @@ async def run_hardware():
             name = p.get_device_info_by_index(i)['name']
             ch = p.get_device_info_by_index(i)['maxInputChannels']
             if ch > 0:
-                if 'Brio' in name:
+                if 'Brio' in name and 'mono' in name:
                     mic_device = i
                     print(f"[MIC] Brio 90: {name} (index {i})")
                     break
@@ -212,9 +212,17 @@ async def run_hardware():
             for i in range(p.get_device_count()):
                 name = p.get_device_info_by_index(i)['name']
                 ch = p.get_device_info_by_index(i)['maxInputChannels']
-                if ch > 0 and 'Jabra' in name and 'mono' in name:
+                if ch > 0 and 'Jabra' in name and 'USB Audio' in name:
                     mic_device = i
-                    print(f"[MIC] Jabra: {name} (index {i})")
+                    print(f"[MIC] Jabra HW: {name} (index {i})")
+                    break
+        if mic_device is None:
+            for i in range(p.get_device_count()):
+                name = p.get_device_info_by_index(i)['name']
+                ch = p.get_device_info_by_index(i)['maxInputChannels']
+                if ch > 0:
+                    mic_device = i
+                    print(f"[MIC] Fallback: {name} (index {i})")
                     break
         p.terminate()
     except: pass

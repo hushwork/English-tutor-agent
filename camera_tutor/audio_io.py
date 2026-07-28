@@ -490,18 +490,26 @@ class AudioCapture:
     # ── VAD ──────────────────────────────────────────────────────
 
     def _detect_speech(self, audio: np.ndarray) -> bool:
-        """Run VAD on an audio chunk."""
+        """Run VAD on an audio chunk.
+
+        Silero VAD requires exactly 512 samples at 16kHz (32ms window).
+        Our chunk may be larger — take the middle 512-sample window.
+        """
         if self._vad_model is None:
             return True
 
+        # Silero needs exactly 512 samples @ 16kHz
+        SILERO_LEN = 512
+        if len(audio) >= SILERO_LEN:
+            # Take middle 512 samples
+            start = (len(audio) - SILERO_LEN) // 2
+            vad_input = audio[start:start + SILERO_LEN]
+        else:
+            # Pad if too short
+            vad_input = np.pad(audio, (0, SILERO_LEN - len(audio)))
+
         import torch
-        tensor = torch.from_numpy(audio).float()
-        if self.sample_rate != 16000:
-            tensor = torch.nn.functional.interpolate(
-                tensor.unsqueeze(0).unsqueeze(0),
-                scale_factor=16000 / self.sample_rate,
-                mode='linear',
-            ).squeeze()
+        tensor = torch.from_numpy(vad_input.copy()).float()
 
         try:
             prob = self._vad_model(tensor, 16000).item()

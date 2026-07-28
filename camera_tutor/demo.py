@@ -249,7 +249,7 @@ async def run_hardware():
             if not frame.is_key_frame:
                 # Still check VAD while waiting
                 if capture.is_speaking and not playback.is_playing:
-                        print("[VAD] Speech detected!")
+                    print("[VAD] Speech detected!")
                     child_audio = capture.read_speech_segment(timeout=3.0)
                     if child_audio:
                         print("\n👧 Child is speaking...")
@@ -335,7 +335,7 @@ async def run_hardware():
             else:
                 # Emma stays silent. Check if child is speaking anyway.
                 if capture.is_speaking and not playback.is_playing:
-                        print("[VAD] Speech detected!")
+                    print("[VAD] Speech detected!")
                     child_audio = capture.read_speech_segment(timeout=3.0)
                     if child_audio:
                         print("\n👧 Child spoke (unsolicited)")

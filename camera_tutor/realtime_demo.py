@@ -92,7 +92,7 @@ camera = None
 for cam_id in [0, 1, 2]:
     try:
         cam = CameraPipeline(camera_id=cam_id, fps=5, resolution=(360, 360),
-                             scene_change_threshold=0.20, key_frame_min_interval=1.0)
+                             scene_change_threshold=0.15, key_frame_min_interval=1.0)
         cam.start()
         camera = cam
         print(f"   Camera: ✅ (device /dev/video{cam_id})")
@@ -166,24 +166,30 @@ def on_open(ws):
             _session_ready.wait()
             _audio_started.wait()
             print("   📷 Camera streaming started")
+            last_send = 0
             while _running:
                 try:
                     frame = camera.capture()
                     if frame:
                         jpg = cv2.imencode('.jpg', frame.image, [cv2.IMWRITE_JPEG_QUALITY, 50])[1]
                         b64 = base64.b64encode(jpg).decode()
+                        # Always push preview to dashboard
                         try:
                             import httpx
                             httpx.post("http://localhost:8200/api/emma/camera",
                                 json={"camera_frame": b64}, timeout=1)
                         except: pass
-                        if frame.is_key_frame:
+                        if frame.is_key_frame or time.time() - last_send > 10:
+                            if not frame.is_key_frame:
+                                last_send = time.time()  # reset on 10s fallback
+                            if frame.is_key_frame:
+                                last_send = time.time()
                             ws.send(json.dumps({
                                 "type": "input_image_buffer.append", "image": b64
                             }))
-                    time.sleep(2)  # 2 seconds between captures
+                    time.sleep(1)
                 except Exception:
-                    time.sleep(2)
+                    time.sleep(1)
         threading.Thread(target=send_camera, daemon=True).start()
 
 # ── Whisper-aligned face sync ───────────────────────────────
@@ -434,7 +440,10 @@ import websocket
 import signal
 
 def _handle_sigint(sig, frame):
-    raise KeyboardInterrupt
+    global _running, ws
+    _running = False
+    try: ws.close()
+    except: pass
 
 signal.signal(signal.SIGINT, _handle_sigint)
 

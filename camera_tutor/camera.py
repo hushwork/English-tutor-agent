@@ -80,6 +80,7 @@ class CameraPipeline:
         self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.resolution[0])
         self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.resolution[1])
         self._cap.set(cv2.CAP_PROP_FPS, self.fps)
+        self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # prevent buffer overflow
         self._running = True
 
     def stop(self):

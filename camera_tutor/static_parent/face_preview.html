@@ -11,9 +11,11 @@
   .dot { width:8px; height:8px; border-radius:50%; display:inline-block; margin-right:6px; }
   .dot.on { background:#4ecf8d; }
   .dot.off { background:#ff5c6c; }
+  #camera { position:fixed; top:12px; right:12px; width:160px; border-radius:8px; border:2px solid #2a2d3a; opacity:0.85; z-index:100; display:none; }
 </style>
 </head>
 <body>
+<img id="camera">
 <div id="info">
   <span class="dot off" id="wssDot"></span>
   <span id="status">Loading...</span>
@@ -33,6 +35,11 @@
       window._setMouthOpen?.(d.mouth_open, d.viseme);
       document.getElementById('status').textContent = d.transcript ? '💬 '+d.transcript : '🟢 Live';
       document.getElementById('mouthVal').textContent = d.mouth_open.toFixed(2);
+    }
+    if (d.camera_frame) {
+      const cam = document.getElementById('camera');
+      cam.src = 'data:image/jpeg;base64,' + d.camera_frame;
+      cam.style.display = 'block';
     }
   };
   ws.onclose = () => { document.getElementById('wssDot').className = 'dot off'; setTimeout(connectWS, 2000); };

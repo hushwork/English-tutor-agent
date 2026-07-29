@@ -351,6 +351,16 @@ async def set_emma_face(data: dict):
     asyncio.create_task(_broadcast_face())
     return {"ok": True}
 
+@app.post("/api/emma/camera")
+async def set_camera_frame(data: dict):
+    """Push camera frame for live preview (called by realtime_demo)."""
+    frame = data.get("camera_frame", "")
+    if frame:
+        _emma_face["camera_frame"] = frame
+        import asyncio
+        asyncio.create_task(_broadcast_face())
+    return {"ok": True}
+
 
 # ── Health Check ────────────────────────────────────────────────
 

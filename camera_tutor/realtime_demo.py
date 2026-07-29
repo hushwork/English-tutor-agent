@@ -8,7 +8,7 @@
   python3 camera_tutor/realtime_demo.py
 
 依赖:
-  pip install websocket-client pyaudio numpy
+  pip install websocket-client sounddevice numpy
 """
 
 from dotenv import load_dotenv
@@ -31,7 +31,7 @@ from _thread import interrupt_main
 
 # ── Audio setup ──────────────────────────────────────────────────
 
-import pyaudio
+import sounddevice as sd
 import numpy as np
 
 CHUNK = 3200  # 0.2s @ 16kHz — WebSocket 音频块大小
@@ -52,42 +52,55 @@ WS_URL = f"wss://{WORKSPACE_ID}.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime?
 
 # ── Audio I/O ───────────────────────────────────────────────────
 
-pa = pyaudio.PyAudio()
-
 # 找麦克风设备 — Jabra / Brio / Poly Sync 20 / 任意可用设备
 mic_index = None
+devices = sd.query_devices()
 for keywords in [
     ["Jabra", "USB Audio"],
     ["Brio", "mono"],
     ["Poly"],
 ]:
-    for i in range(pa.get_device_count()):
-        name = pa.get_device_info_by_index(i)["name"]
-        ch = pa.get_device_info_by_index(i)["maxInputChannels"]
-        if ch > 0 and all(k in name for k in keywords):
+    for i, dev in enumerate(devices):
+        if dev["max_input_channels"] > 0 and all(k in dev["name"] for k in keywords):
             mic_index = i
             break
     if mic_index is not None:
         break
 
-mic_name = pa.get_device_info_by_index(mic_index)["name"] if mic_index is not None else "系统默认"
+mic_name = devices[mic_index]["name"] if mic_index is not None else "系统默认"
 print(f"   Mic: {mic_name} (device {mic_index})")
 
-mic = pa.open(format=pyaudio.paInt16, channels=1, rate=RATE_MIC,
-              input=True, input_device_index=mic_index, frames_per_buffer=CHUNK)
-spk = pa.open(format=pyaudio.paInt16, channels=1, rate=RATE_SPK, output=True)
+def _open_mic():
+    s = sd.RawInputStream(samplerate=RATE_MIC, channels=1, dtype='int16',
+                           blocksize=CHUNK, device=mic_index)
+    s.start()
+    return s
+
+def _open_spk():
+    s = sd.RawOutputStream(samplerate=RATE_SPK, channels=1, dtype='int16',
+                            blocksize=CHUNK)
+    s.start()
+    return s
+
+mic = _open_mic()
+spk = _open_spk()
 
 print(f"   Model: {MODEL}")
 
-# 启动摄像头（1 fps，场景变化时才上传）
-camera = CameraPipeline(camera_id=0, fps=1, resolution=(224, 224),
-                        scene_change_threshold=0.20, key_frame_min_interval=1.0)
-try:
-    camera.start()
-    print("   Camera: ✅")
-except Exception as e:
-    print(f"   Camera: ❌ ({e})")
-    camera = None
+# 启动摄像头 — 尝试多个 camera_id
+camera = None
+for cam_id in [0, 1, 2]:
+    try:
+        cam = CameraPipeline(camera_id=cam_id, fps=5, resolution=(360, 360),
+                             scene_change_threshold=0.20, key_frame_min_interval=1.0)
+        cam.start()
+        camera = cam
+        print(f"   Camera: ✅ (device /dev/video{cam_id})")
+        break
+    except Exception as e:
+        print(f"   Camera {cam_id}: ❌ ({e})")
+if camera is None:
+    print("   Camera: ❌ (no device found)")
 print()
 
 # ── WebSocket callbacks ─────────────────────────────────────────
@@ -97,8 +110,9 @@ emma_avatar = EmmaAvatar()   # instance — drives face viseme lookup
 _ws = None
 _running = True
 _last_audio_time = [0.0]  # for response.create fallback
-_audio_started = threading.Event()  # gate: audio before camera image
-_session_ready = threading.Event()  # gate: session confirmed by server
+_audio_started = threading.Event()
+_session_ready = threading.Event()
+_browser_opened = False  # only open browser on first connect
 
 def on_open(ws):
     global _ws
@@ -128,12 +142,12 @@ def on_open(ws):
         }
     }))
 
-    # 启动麦克风发送线程（全双工，服务端 VAD 处理回授）
+    # 启动麦克风发送线程
     def send_audio():
         first = True
         while _running:
             try:
-                data = mic.read(CHUNK, exception_on_overflow=False)
+                data = bytes(mic.read(CHUNK)[0])  # sounddevice returns (data, overflow)
                 ws.send(json.dumps({
                     "type": "input_audio_buffer.append",
                     "audio": base64.b64encode(data).decode()
@@ -141,44 +155,35 @@ def on_open(ws):
                 if first:
                     first = False
                     _audio_started.set()  # signal camera: audio flowing
-            except Exception:
+            except Exception as e:
+                print(f"  ⚠️ mic error: {e}")
                 break
     threading.Thread(target=send_audio, daemon=True).start()
 
     # 启动摄像头发送线程（等 session 确认 + 音频就绪后再发图像）
     if camera:
         def send_camera():
-            _session_ready.wait()       # 等服务端确认 session
-            _audio_started.wait()       # 等第一帧音频已发送
-            still_seconds = 0
+            _session_ready.wait()
+            _audio_started.wait()
+            print("   📷 Camera streaming started")
             while _running:
                 try:
-                    frame = camera.get_latest_frame()
+                    frame = camera.capture()
                     if frame:
-                        # 场景变化 → 立即发
+                        jpg = cv2.imencode('.jpg', frame.image, [cv2.IMWRITE_JPEG_QUALITY, 50])[1]
+                        b64 = base64.b64encode(jpg).decode()
+                        try:
+                            import httpx
+                            httpx.post("http://localhost:8200/api/emma/camera",
+                                json={"camera_frame": b64}, timeout=1)
+                        except: pass
                         if frame.is_key_frame:
-                            still_seconds = 0
-                            jpg = cv2.imencode('.jpg', frame.image, [cv2.IMWRITE_JPEG_QUALITY, 50])[1]
-                            b64 = base64.b64encode(jpg).decode()
                             ws.send(json.dumps({
-                                "type": "input_image_buffer.append",
-                                "image": b64
+                                "type": "input_image_buffer.append", "image": b64
                             }))
-                            time.sleep(1.0)
-                        else:
-                            # 静止 → 每 15 秒发一帧保活
-                            still_seconds += 1
-                            if still_seconds >= 15:
-                                still_seconds = 0
-                                jpg = cv2.imencode('.jpg', frame.image, [cv2.IMWRITE_JPEG_QUALITY, 40])[1]
-                                b64 = base64.b64encode(jpg).decode()
-                                ws.send(json.dumps({
-                                    "type": "input_image_buffer.append",
-                                    "image": b64
-                                }))
-                            time.sleep(1.0)
+                    time.sleep(2)  # 2 seconds between captures
                 except Exception:
-                    pass
+                    time.sleep(2)
         threading.Thread(target=send_camera, daemon=True).start()
 
 # ── Whisper-aligned face sync ───────────────────────────────
@@ -323,7 +328,7 @@ def _flush_whisper_sync():
 
 
 def on_message(ws, message):
-    global _buffer_audio, _buffer_transcript
+    global _buffer_audio, _buffer_transcript, _browser_opened
     try:
         event = json.loads(message)
     except json.JSONDecodeError:
@@ -335,18 +340,19 @@ def on_message(ws, message):
         print(f"  [event] {event_type}", flush=True)
 
     if event_type == "session.updated":
-        # API session confirmed — signal camera & start browser
         _session_ready.set()
-        try:
-            import webbrowser, httpx as _hx
-            for p in ["/static/face_preview.html", "/static/live2d/bundle.js",
-                      "/static/live2d/core/live2dcubismcore.min.js"]:
-                try: _hx.get(f"http://localhost:8200{p}", timeout=2)
-                except: pass
-            webbrowser.open("http://localhost:8200/static/face_preview.html")
-            print("   🔗 Emma 面部页面已打开")
-        except Exception:
-            pass
+        if not _browser_opened:
+            _browser_opened = True
+            try:
+                import webbrowser, httpx as _hx
+                for p in ["/static/face_preview.html", "/static/live2d/bundle.js",
+                          "/static/live2d/core/live2dcubismcore.min.js"]:
+                    try: _hx.get(f"http://localhost:8200{p}", timeout=2)
+                    except: pass
+                webbrowser.open("http://localhost:8200/static/face_preview.html")
+                print("   🔗 Emma 面部页面已打开")
+            except Exception:
+                pass
 
     if event_type == "response.audio.delta":
         # Buffer audio for whisper-aligned playback
@@ -425,6 +431,13 @@ def _start_dashboard(port: int = 8200):
 # ── Main ────────────────────────────────────────────────────────
 
 import websocket
+import signal
+
+def _handle_sigint(sig, frame):
+    global _running
+    _running = False
+
+signal.signal(signal.SIGINT, _handle_sigint)
 
 print("=" * 55)
 print("  Camera Tutor — 实时语音对话")
@@ -453,14 +466,29 @@ ws = websocket.WebSocketApp(
     on_close=on_close,
 )
 
-try:
-    ws.run_forever()
-except KeyboardInterrupt:
-    print("\n\n👋 再见！")
-finally:
-    _running = False
-    if camera:
-        camera.stop()
-    mic.close()
-    spk.close()
-    pa.terminate()
+while _running:
+    try:
+        ws.run_forever(ping_interval=120)
+    except KeyboardInterrupt:
+        _running = False
+        break
+    if not _running:
+        break
+    print("   ⏳ Omni API 重连中...")
+    time.sleep(2)
+    _audio_started.clear()
+    _session_ready.clear()
+    ws = websocket.WebSocketApp(
+        WS_URL,
+        header=[f"Authorization: Bearer {API_KEY}"],
+        on_open=on_open,
+        on_message=on_message,
+        on_error=on_error,
+        on_close=on_close,
+    )
+
+print("\n\n👋 再见！")
+if camera:
+    camera.stop()
+mic.stop()
+spk.stop()

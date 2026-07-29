@@ -341,9 +341,6 @@ def on_message(ws, message):
         return
 
     event_type = event.get("type", "")
-    # Debug: log all non-audio-delta events
-    if event_type != "response.audio.delta":
-        print(f"  [event] {event_type}", flush=True)
 
     if event_type == "session.updated":
         _session_ready.set()

@@ -260,8 +260,10 @@ def _flush_whisper_sync():
     _buffer_transcript = []
 
     words = transcript.split()
-    if not words or len(words) < 2:
-        # Too short for alignment — just play
+    # 计算音频总时长（24kHz 16bit mono）
+    total_duration = sum(len(c) for c in audio_chunks) / (24000 * 2)
+    if total_duration < 0.5:
+        # 音频太短（<0.5s），whisper 时间戳不可靠，直接播放
         for chunk in audio_chunks:
             spk.write(chunk)
         return
@@ -452,6 +454,11 @@ print()
 
 # 自动启动 Dashboard（提供面部动画 WebSocket 广播 + 静态页面）
 _start_dashboard(8200)
+
+# 预加载 Whisper 模型（后台线程，避免首次说话延迟）
+def _preload_whisper():
+    _get_whisper()
+threading.Thread(target=_preload_whisper, daemon=True).start()
 
 # 清空上次的嘴型状态
 import httpx

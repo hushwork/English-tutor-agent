@@ -202,18 +202,22 @@ _buffer_seq_id = 0
 _face_timer = None
 _face_seq_id = 0
 _whisper_model = None  # lazy init
+_whisper_lock = threading.Lock()  # prevent race between preload and first use
 
 def _get_whisper():
     global _whisper_model
-    if _whisper_model is None:
+    if _whisper_model is not None:
+        return _whisper_model
+    with _whisper_lock:
+        if _whisper_model is not None:  # double-check
+            return _whisper_model
         from faster_whisper import WhisperModel
-        # 离线加载，避免 HuggingFace 连接超时
         import os
         os.environ["HF_HUB_OFFLINE"] = "1"
         print("   ⏳ Loading whisper tiny model...", flush=True)
         _whisper_model = WhisperModel("tiny", device="cpu", compute_type="int8")
         print("   ✅ Whisper ready", flush=True)
-    return _whisper_model
+        return _whisper_model
 
 def _push_face_viseme(word: str, full_transcript: str):
     try:
@@ -344,6 +348,10 @@ def on_message(ws, message):
 
     event_type = event.get("type", "")
 
+    # Debug: 临时事件日志
+    if event_type != "response.audio.delta":
+        print(f"  [event] {event_type}", flush=True)
+
     if event_type == "session.updated":
         _session_ready.set()
         if not _browser_opened:
@@ -455,10 +463,8 @@ print()
 # 自动启动 Dashboard（提供面部动画 WebSocket 广播 + 静态页面）
 _start_dashboard(8200)
 
-# 预加载 Whisper 模型（后台线程，避免首次说话延迟）
-def _preload_whisper():
-    _get_whisper()
-threading.Thread(target=_preload_whisper, daemon=True).start()
+# 预加载 Whisper 模型（避免首次说话延迟）
+_get_whisper()
 
 # 清空上次的嘴型状态
 import httpx

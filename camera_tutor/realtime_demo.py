@@ -434,8 +434,7 @@ import websocket
 import signal
 
 def _handle_sigint(sig, frame):
-    global _running
-    _running = False
+    raise KeyboardInterrupt
 
 signal.signal(signal.SIGINT, _handle_sigint)
 

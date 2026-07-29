@@ -136,8 +136,8 @@ def on_open(ws):
             },
             "turn_detection": {
                 "type": "server_vad",
-                "threshold": 0.5,
-                "silence_duration_ms": 400,
+                "threshold": 0.7,
+                "silence_duration_ms": 800,
             },
         }
     }))

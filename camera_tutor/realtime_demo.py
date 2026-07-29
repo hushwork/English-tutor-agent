@@ -46,36 +46,37 @@ if not API_KEY:
     sys.exit(1)
 
 WORKSPACE_ID = "llm-xo2ff9jhvnvgvu6b"
-MODEL = "qwen3.5-omni-flash-realtime"  # 也可用 qwen3.5-omni-plus-realtime
+MODEL = "qwen3.5-omni-flash-realtime"
 
-WS_URL = f"wss://{WORKSPACE_ID}.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime?model={MODEL}"
+WS_URL = f"wss://{WORKSPACE_ID}.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime?model={MODEL}&language=en"
 
 # ── Audio I/O ───────────────────────────────────────────────────
 
 pa = pyaudio.PyAudio()
 
-# 找 Jabra 或 Brio
+# 找麦克风设备 — Jabra / Brio / Poly Sync 20 / 任意可用设备
 mic_index = None
-for i in range(pa.get_device_count()):
-    name = pa.get_device_info_by_index(i)["name"]
-    ch = pa.get_device_info_by_index(i)["maxInputChannels"]
-    if ch > 0:
-        if "Jabra" in name and "USB Audio" in name:
-            mic_index = i
-            break
-if mic_index is None:
+for keywords in [
+    ["Jabra", "USB Audio"],
+    ["Brio", "mono"],
+    ["Poly"],
+]:
     for i in range(pa.get_device_count()):
         name = pa.get_device_info_by_index(i)["name"]
         ch = pa.get_device_info_by_index(i)["maxInputChannels"]
-        if ch > 0 and "Brio" in name and "mono" in name:
+        if ch > 0 and all(k in name for k in keywords):
             mic_index = i
             break
+    if mic_index is not None:
+        break
+
+mic_name = pa.get_device_info_by_index(mic_index)["name"] if mic_index is not None else "系统默认"
+print(f"   Mic: {mic_name} (device {mic_index})")
 
 mic = pa.open(format=pyaudio.paInt16, channels=1, rate=RATE_MIC,
               input=True, input_device_index=mic_index, frames_per_buffer=CHUNK)
 spk = pa.open(format=pyaudio.paInt16, channels=1, rate=RATE_SPK, output=True)
 
-print(f"   Mic: device {mic_index}")
 print(f"   Model: {MODEL}")
 
 # 启动摄像头（1 fps，场景变化时才上传）
@@ -115,6 +116,9 @@ def on_open(ws):
             "instructions": tutor.system_prompt_guidance(),
             "input_audio_format": "pcm",
             "output_audio_format": "pcm",
+            "input_audio_transcription": {
+                "language": "en",
+            },
             "turn_detection": {
                 "type": "server_vad",
                 "threshold": 0.5,
@@ -123,7 +127,7 @@ def on_open(ws):
         }
     }))
 
-    # 启动麦克风发送线程
+    # 启动麦克风发送线程（全双工，服务端 VAD 处理回授）
     def send_audio():
         first = True
         while _running:
@@ -190,8 +194,9 @@ def _get_whisper():
     global _whisper_model
     if _whisper_model is None:
         from faster_whisper import WhisperModel
-        # Use mirror for faster download in China
-        os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+        # 离线加载，避免 HuggingFace 连接超时
+        import os
+        os.environ["HF_HUB_OFFLINE"] = "1"
         print("   ⏳ Loading whisper tiny model...", flush=True)
         _whisper_model = WhisperModel("tiny", device="cpu", compute_type="int8")
         print("   ✅ Whisper ready", flush=True)

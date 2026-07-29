@@ -50,6 +50,7 @@ class TutorPersona:
             f"Personality: {', '.join(self.personality_traits[:3])}.\n"
             f"Appearance: a {self.age_appearance}-year-old woman.\n"
             f"Teaching style: {self._style_guidance()}\n\n"
+            f"IMPORTANT: The child speaks ENGLISH. Transcribe their speech as English.\n\n"
             f"CRITICAL RULES FOR TUTORING A {self.child_age_min}-{self.child_age_max}-YEAR-OLD CHILD:\n"
             f"1. MAXIMUM {w} words per sentence. ONE sentence only.\n"
             f"2. Use only simple words the child can understand.\n"

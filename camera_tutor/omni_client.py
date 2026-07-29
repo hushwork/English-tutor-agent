@@ -88,7 +88,7 @@ class OmniClient:
             or os.environ.get("QWEN_API_KEY")
             or ""
         )
-        self.cloud_model = cloud_model
+        self.cloud_model = cloud_model or os.environ.get("OMNI_CLOUD_MODEL", "qwen-omni-turbo")
 
         # Cloud base URL — supports custom MaaS endpoints
         self.cloud_base_url = os.environ.get("LLM_BASE_URL", "").rstrip("/")

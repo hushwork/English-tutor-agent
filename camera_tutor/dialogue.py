@@ -73,7 +73,7 @@ class EmmaDialogue:
             "I see {corrected}! Can you say that?",
         ],
         "wrong_plural": [
-            "Wow, {corrected}! One {singular}, two {plural}!",
+            "Wow, {corrected}!",
             "You have {corrected}! That's right!",
         ],
         "wrong_tense": [

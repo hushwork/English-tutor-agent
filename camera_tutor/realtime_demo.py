@@ -98,6 +98,7 @@ _ws = None
 _running = True
 _last_audio_time = [0.0]  # for response.create fallback
 _audio_started = threading.Event()  # gate: audio before camera image
+_session_ready = threading.Event()  # gate: session confirmed by server
 
 def on_open(ws):
     global _ws
@@ -144,10 +145,11 @@ def on_open(ws):
                 break
     threading.Thread(target=send_audio, daemon=True).start()
 
-    # 启动摄像头发送线程（场景变化时 1fps，静止时每 15 秒 1 帧保活）
+    # 启动摄像头发送线程（等 session 确认 + 音频就绪后再发图像）
     if camera:
         def send_camera():
-            _audio_started.wait()  # wait until first audio is sent
+            _session_ready.wait()       # 等服务端确认 session
+            _audio_started.wait()       # 等第一帧音频已发送
             still_seconds = 0
             while _running:
                 try:
@@ -333,7 +335,8 @@ def on_message(ws, message):
         print(f"  [event] {event_type}", flush=True)
 
     if event_type == "session.updated":
-        # API session confirmed — open browser now
+        # API session confirmed — signal camera & start browser
+        _session_ready.set()
         try:
             import webbrowser, httpx as _hx
             for p in ["/static/face_preview.html", "/static/live2d/bundle.js",

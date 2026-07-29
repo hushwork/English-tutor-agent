@@ -89,7 +89,7 @@ print(f"   Model: {MODEL}")
 
 # 启动摄像头 — 尝试多个 camera_id
 camera = None
-for cam_id in [0, 1, 2]:
+for cam_id in [1, 0, 2]:  # macOS: 优先内置摄像头，跳过虚拟设备
     try:
         cam = CameraPipeline(camera_id=cam_id, fps=5, resolution=(360, 360),
                              scene_change_threshold=0.15, key_frame_min_interval=1.0)

@@ -191,7 +191,7 @@ class CameraTutorAgent:
         logger.info("Conversation memory: %s", self.memory._data_dir)
 
         self.sr = SpacedRepetition(storage_dir=self._storage_dir, user_id="camera_tutor")
-        logger.info("Spaced repetition: %s", self.sr._path)
+        logger.info("Spaced repetition: %s", self.sr._data_dir)
 
         self.reporter = ParentReportEngine(storage_dir=self._storage_dir)
 

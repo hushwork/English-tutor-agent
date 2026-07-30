@@ -201,6 +201,7 @@ class CameraTutorAgent:
             ws_getter=self._get_current_ws,
             api_key=self.config.api_key,
             instructions_builder=self._build_instructions,
+            on_analysis=self._on_scene_analysis,
         )
 
         # Register signal handler
@@ -222,6 +223,39 @@ class CameraTutorAgent:
         if self.connection is None or self.connection.ws is None:
             return None
         return self.connection.ws
+
+    def _on_scene_analysis(self, snapshot: object) -> None:
+        """Adjust VisionManager's WS image frequency based on child's state.
+
+        Called by SceneProber after each scene analysis.
+        - Active/interacting → aggressive image push (5s)
+        - Focused/studying → minimal push (30s)
+        - Sleeping/resting/quiet → skip WS images entirely
+        """
+        if self.vision is None:
+            return
+        activity = getattr(snapshot, "activity", "")
+        mood = getattr(snapshot, "mood", "")
+        should_engage = getattr(snapshot, "should_engage", True)
+
+        if activity in ("sleeping", "resting") or mood == "tired":
+            interval = 0.0
+        elif activity in ("studying", "reading") or mood == "focused":
+            interval = 30.0
+        elif should_engage and mood in ("happy", "bored"):
+            interval = 5.0
+        else:
+            interval = 10.0
+
+        old = self.vision.ws_interval
+        if interval != old:
+            self.vision.ws_interval = interval
+            if interval == 0.0:
+                logger.info("Scene: WS images paused (%s/%s)", activity, mood)
+            elif old == 0.0:
+                logger.info("Scene: WS images resumed (every %.0fs, %s/%s)", interval, activity, mood)
+            else:
+                logger.debug("Scene: WS interval %.0fs → %.0fs (%s/%s)", old, interval, activity, mood)
 
     def _setup_camera(self) -> None:
         """Try to initialise the camera pipeline."""
@@ -394,6 +428,7 @@ class CameraTutorAgent:
             ws_getter=self._get_current_ws,
             api_key=self.config.api_key,
             instructions_builder=self._build_instructions,
+            on_analysis=self._on_scene_analysis,
         )
         self.scene_prober.start()
 

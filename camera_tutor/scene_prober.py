@@ -106,12 +106,14 @@ class SceneProber:
         ws_getter: Callable[[], Optional[object]],
         api_key: Optional[str] = None,
         instructions_builder: Optional[Callable[[], str]] = None,
+        on_analysis: Optional[Callable[["SceneSnapshot"], None]] = None,
         interval: float = DEFAULT_PROBE_INTERVAL,
     ):
         self._frame_getter = frame_getter
         self._ws_getter = ws_getter
         self._api_key = api_key or os.environ.get("DASHSCOPE_API_KEY", "")
         self._instructions_builder = instructions_builder
+        self._on_analysis = on_analysis
         self._interval = interval
 
         # API config
@@ -295,6 +297,13 @@ class SceneProber:
             self._probe_count += 1
             prev = self._latest
             self._latest = snapshot
+
+        # Notify the agent (for adaptive vision interval, etc.)
+        if self._on_analysis:
+            try:
+                self._on_analysis(snapshot)
+            except Exception as e:
+                logger.debug("on_analysis callback error: %s", e)
 
         changed = prev is None or snapshot.meaningfully_different_from(prev)
         logger.debug(

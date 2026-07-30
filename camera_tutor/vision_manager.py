@@ -63,6 +63,10 @@ class VisionManager:
         self._threads: list[threading.Thread] = []
         self._started = False
 
+        # Adaptive WS push interval (mutated by SceneProber via agent)
+        self.ws_interval: float = 5.0      # active → 5s
+        self._ws_lock = threading.Lock()
+
         # Frame buffer (thread-safe: latest JPEG base64)
         self._frame_lock = threading.Lock()
         self._latest_b64: Optional[str] = None
@@ -142,10 +146,15 @@ class VisionManager:
     # ── Internal: preview loop ──────────────────────────────────
 
     def _preview_loop(self) -> None:
-        """Periodically send frames to WebSocket + Dashboard HTTP."""
+        """Periodically send frames to WebSocket + Dashboard HTTP.
+
+        WS interval is dynamically adjusted by SceneProber via agent:
+        - Active/interacting → 5s
+        - Focused/studying → 30s
+        - Sleeping/resting → skip entirely (interval = infinity)
+        """
         last_keyframe_time = 0.0
         preview_interval = 0.2   # Send preview to dashboard every 200ms
-        ws_interval = 2.0        # Send keyframe to WS every 2s
 
         while not self._stop_event.is_set():
             try:
@@ -159,8 +168,10 @@ class VisionManager:
                 # Push to dashboard HTTP (always, for camera preview)
                 self._push_to_dashboard(b64)
 
-                # Push to WebSocket (rate-limited)
-                if now - last_keyframe_time >= ws_interval:
+                # Push to WebSocket (rate-limited, adaptive)
+                with self._ws_lock:
+                    interval = self.ws_interval
+                if interval > 0 and now - last_keyframe_time >= interval:
                     last_keyframe_time = now
                     self._push_to_websocket(b64)
 

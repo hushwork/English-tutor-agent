@@ -166,10 +166,8 @@ class VisionManager:
                 # Push to dashboard HTTP (always, for camera preview)
                 self._push_to_dashboard(b64)
 
-                # Push to WebSocket (rate-limited, adaptive)
-                with self._ws_lock:
-                    interval = self.ws_interval
-                if interval > 0 and now - last_keyframe_time >= interval:
+                # Push to WebSocket (rate-limited)
+                if now - last_keyframe_time >= self.ws_interval:
                     last_keyframe_time = now
                     self._push_to_websocket(b64)
 

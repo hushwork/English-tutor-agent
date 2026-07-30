@@ -69,6 +69,16 @@ def _mel_filterbank(n_fft: int, sr: int, n_mels: int = 40) -> np.ndarray:
     return filters
 
 
+def _normalized_mel_filterbank(n_fft: int, sr: int, n_mels: int = 40) -> np.ndarray:
+    """Create and normalize mel filterbank. Filters sum to 1 each."""
+    filters = _mel_filterbank(n_fft, sr, n_mels)
+    for m in range(n_mels):
+        s = filters[m].sum()
+        if s > 0:
+            filters[m] /= s
+    return filters
+
+
 # Cache: filterbank only depends on n_fft and sr — computed once
 _MEL_FILTERS: dict[tuple[int, int], np.ndarray] = {}
 
@@ -95,7 +105,7 @@ def _mfcc(signal: np.ndarray, sr: int, n_mfcc: int = 13, n_mels: int = 40) -> np
     # Lazy-init mel filterbank
     key = (n_fft, sr)
     if key not in _MEL_FILTERS:
-        _MEL_FILTERS[key] = _mel_filterbank(n_fft, sr, n_mels)
+        _MEL_FILTERS[key] = _normalized_mel_filterbank(n_fft, sr, n_mels)
     filters = _MEL_FILTERS[key]
 
     # Apply mel filterbank (dot product: (n_mels, n_freqs) @ (n_freqs,))
@@ -110,7 +120,7 @@ def _mfcc(signal: np.ndarray, sr: int, n_mfcc: int = 13, n_mels: int = 40) -> np
     k = np.arange(n_mfcc).reshape(-1, 1)          # (n_mfcc, 1)
     j = np.arange(n).reshape(1, -1)                # (1, n_mels)
     dct_matrix = np.cos(np.pi * k * (j + 0.5) / n)  # (n_mfcc, n_mels)
-    mfcc = dct_matrix @ mel_energies
+    mfcc = dct_matrix @ mel_energies * np.sqrt(2.0 / n)
 
     # Lifter (cepstral liftering): emphasises higher-order coeffs
     L = 22  # standard lifter parameter

@@ -524,6 +524,22 @@ python3 camera_tutor/dashboard_server.py
 | `camera.py` | pHash 场景变化检测、自适应帧率 |
 | `omni_client.py` | Qwen-Omni 双后端（本地 + 云端）|
 
+### 智能教师系统
+
+- **记忆系统**: ConversationMemory + SpacedRepetition — 跨会话持久化对话和词汇
+- **自适应提示词**: 注入已知词汇、常见错误、待复习卡片到系统指令
+- **防重复**: 每次回复后更新指令，展示最近 8 句 + 高频词提醒
+- **词汇提取**: 从 Emma 的 TTS 文本中自动提取新词（过滤函数词）
+
+### 唇型同步 (Viseme)
+
+| 组件 | 说明 |
+|------|------|
+| 检测器 | `spectral_viseme.py` — 13 维 MFCC 纯 numpy 实现, ~30µs/窗 |
+| 精度 | 在真实 Emma 语音 (38s) 上校准, 元音 67%、开口率 36% |
+| 校准 | `calibrate_mfcc.py` — 录制 → 分析 → 阈值更新（模型更新时用） |
+| 渲染 | Live2D Cubism SDK + EMA 平滑 (α=0.35) |
+
 ### 硬件最低投入
 
 | 设备 | 型号 | 价格 |

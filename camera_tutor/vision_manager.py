@@ -48,6 +48,7 @@ class VisionManager:
         camera: CameraPipeline,
         ws_getter,
         audio_ready: Optional[threading.Event] = None,
+        session_ready: Optional[threading.Event] = None,
     ):
         """Initialize VisionManager.
 
@@ -55,12 +56,13 @@ class VisionManager:
             camera: CameraPipeline instance.
             ws_getter: Callable returning current WebSocketApp (or None).
             audio_ready: Event set when first mic audio chunk is sent.
-                WS image push waits for this to avoid 'image before audio'
-                errors from the Omni API.
+            session_ready: Event set when session.updated is received.
+                Both must be set before WS image push begins.
         """
         self._camera = camera
         self._ws_getter = ws_getter
         self._audio_ready = audio_ready
+        self._session_ready = session_ready
         self.ws_interval: float = 2.0
 
         # Thread management
@@ -154,7 +156,11 @@ class VisionManager:
         last_keyframe_time = 0.0
         preview_interval = 0.2
 
-        # Wait for audio before sending any WS images
+        # Wait for BOTH session ready AND audio ready before sending WS images.
+        # Without this, images can arrive before session is configured,
+        # causing "Error append image before append audio" from Omni API.
+        if self._session_ready is not None:
+            self._session_ready.wait()
         if self._audio_ready is not None:
             self._audio_ready.wait()
         while not self._stop_event.is_set():

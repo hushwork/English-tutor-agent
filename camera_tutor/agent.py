@@ -67,6 +67,11 @@ class AgentConfig:
     camera_scene_threshold: float = 0.15
     camera_key_interval: float = 1.0
 
+    # Audio
+    mic_gain: float = 1.0         # Linear — leave at 1.0 unless diagnostic says otherwise
+    mic_device_index: int | None = None  # Force a specific mic, or None for auto-detect
+    server_vad_threshold: float = 0.5   # Server VAD sensitivity (lower = more sensitive)
+
     def __post_init__(self):
         if not self.api_key:
             self.api_key = os.environ.get("DASHSCOPE_API_KEY", "")
@@ -75,6 +80,13 @@ class AgentConfig:
                 "llm-xo2ff9jhvnvgvu6b")  # fallback — matches original realtime_demo.py
         if not self.model:
             self.model = os.environ.get("OMNI_MODEL", "qwen3.5-omni-flash-realtime")
+        # Allow env override for mic gain
+        env_gain = os.environ.get("MIC_GAIN")
+        if env_gain:
+            try:
+                self.mic_gain = float(env_gain)
+            except ValueError:
+                pass
 
         if not self.workspace_id:
             logger.error(
@@ -177,7 +189,10 @@ class CameraTutorAgent:
             self._setup_camera()
 
         # Audio
-        self.audio = AudioManager()
+        self.audio = AudioManager(
+            mic_gain=self.config.mic_gain,
+            mic_device_index=self.config.mic_device_index,
+        )
 
         # Face sync (dashboard connection)
         self.face_sync = FaceSyncManager()
@@ -349,7 +364,7 @@ class CameraTutorAgent:
                 },
                 "turn_detection": {
                     "type": "server_vad",
-                    "threshold": 0.7,
+                    "threshold": self.config.server_vad_threshold,
                     "silence_duration_ms": 800,
                 },
             },
@@ -376,7 +391,8 @@ class CameraTutorAgent:
             self.vision.stop()
         if self.camera:
             self.vision = VisionManager(camera=self.camera, ws_getter=lambda: ws,
-                                         audio_ready=self.state.audio_started)
+                                         audio_ready=self.state.audio_started,
+                                         session_ready=self.state.session_ready)
             self.vision.start()
 
         self._print_welcome()
@@ -479,7 +495,16 @@ class CameraTutorAgent:
 
     def _mic_send_loop(self, ws) -> None:
         """Continuously read mic audio and send to WebSocket."""
+        # Wait for session.updated before sending anything — avoids
+        # "Error append image before append audio" race on reconnect.
+        logger.debug("Mic thread waiting for session.updated...")
+        self.state.session_ready.wait(timeout=10.0)
+        if not self.state.session_ready.is_set():
+            logger.error("Session not ready after 10s — mic send aborted")
+            return
+
         first = True
+        level_check_at = time.time() + 5.0  # First level check after 5s
         while not self._mic_stop.is_set() and self.state.running:
             data = self.audio.read_mic()
             if data is None:
@@ -496,6 +521,25 @@ class CameraTutorAgent:
             except Exception as e:
                 logger.warning("Mic send error: %s", e)
                 break
+
+            # Periodic mic level monitoring — helps diagnose "LLM can't hear me"
+            now = time.time()
+            if now >= level_check_at:
+                level_check_at = now + 10.0  # Every 10s
+                rms = self.audio.mic_level_rms
+                dbfs = self.audio.mic_level_dbfs
+                if rms < 10:
+                    logger.warning(
+                        "⚠️  Mic level VERY LOW (RMS=%.1f, %.1f dBFS). "
+                        "Server VAD may not trigger. "
+                        "Check: System Preferences > Sound > Input volume, "
+                        "or increase mic_gain (currently %.1fx).",
+                        rms, dbfs, self.audio.mic_gain,
+                    )
+                elif rms < 50:
+                    logger.info("Mic level: RMS=%.1f, %.1f dBFS (moderate — ok)", rms, dbfs)
+                else:
+                    logger.debug("Mic level: RMS=%.1f, %.1f dBFS (good)", rms, dbfs)
 
     def _process_viseme_chunk(self, chunk: bytes) -> None:
         """Extract visemes from an audio chunk and push to face sync.
@@ -599,13 +643,33 @@ class CameraTutorAgent:
 
         # Recent phrases (use memory for full history, cap at 8 for prompt)
         recent_phrases = []
+        repeated_warning = ""
         if self.memory:
-            # Get last 12 messages, filter Emma's responses
             ctx = self.memory.get_context(max_messages=24)
             recent_phrases = [
                 m["content"][:80]
                 for m in ctx[-12:] if m.get("role") == "assistant"
             ][-8:]
+
+            # — Same-text repetition guard —
+            # If Emma said the exact same thing 2+ consecutive times, the
+            # model is stuck (usually garbled audio). Force a topic change.
+            if len(recent_phrases) >= 2:
+                last = recent_phrases[-1]
+                same_count = 0
+                for p in reversed(recent_phrases):
+                    if p == last:
+                        same_count += 1
+                    else:
+                        break
+                if same_count >= 2:
+                    repeated_warning = (
+                        f"\n⚠️  CRITICAL: You just said the EXACT same thing "
+                        f"{same_count} times in a row! "
+                        f"The child is trying to talk but the audio is unclear. "
+                        f"CHANGE THE SUBJECT. Ask a DIFFERENT question. "
+                        f"Or say: 'I didn't quite catch that — say it again?'\n"
+                    )
         recent_line = ""
         if recent_phrases:
             recent_line = (
@@ -633,7 +697,7 @@ class CameraTutorAgent:
             f"VISION: You receive real-time camera images — use what you SEE.\n\n"
             f"YOUR MISSION: Be a friendly companion who happens to speak English.\n"
             f"Follow the child's lead. Chat, play, wonder — don't teach or quiz.\n\n"
-            f"{session_info}{vocab_line}{errors_line}{due_line}{recent_line}"
+            f"{session_info}{vocab_line}{errors_line}{due_line}{repeated_warning}{recent_line}"
             f"YOUR STYLE:\n"
             f"1. Short and natural — 1-2 sentences, like talking to a friend.\n"
             f"2. Switch it up: sometimes playful 🎨, sometimes curious 🔍,\n"

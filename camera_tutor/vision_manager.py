@@ -61,14 +61,12 @@ class VisionManager:
         self._camera = camera
         self._ws_getter = ws_getter
         self._audio_ready = audio_ready
-        self.ws_interval: float = 5.0
+        self.ws_interval: float = 2.0
 
         # Thread management
         self._stop_event = threading.Event()
         self._threads: list[threading.Thread] = []
         self._started = False
-
-        # WS push interval (every 5s — consistent, low overhead)
 
         # Frame buffer (thread-safe: latest JPEG base64)
         self._frame_lock = threading.Lock()

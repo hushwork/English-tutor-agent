@@ -137,8 +137,17 @@ _MFCC_SILENCE = 0.005  # same threshold as old code
 def classify_viseme(signal: np.ndarray, sr: int) -> Viseme:
     """Classify a 20ms audio window into a Viseme using MFCC features.
 
-    Conservative consonant detection: only classify as consonant when
-    strongly indicated. Most frames fall through to vowel classification.
+    Uses 13 MFCC coefficients and RMS energy as features.
+    Vowel classification: MFCC[1] (height proxy) + MFCC[2] (frontness proxy).
+    Consonant classification: MFCC[0] (energy), MFCC[3:5] (broadband),
+    and MFCC[6:8] (high-frequency detail).
+
+    Args:
+        signal: float32 array, 20ms at sample rate sr, normalized to [-1, 1]
+        sr: sample rate (24000)
+
+    Returns:
+        Viseme classification
     """
     mfcc, energy = _compute_features(signal, sr)
 
@@ -146,54 +155,71 @@ def classify_viseme(signal: np.ndarray, sr: int) -> Viseme:
     if energy < _MFCC_SILENCE:
         return Viseme.V00_SIL
 
-    c1 = mfcc[1]   # spectral tilt  → vowel height proxy
-    c2 = mfcc[2]   # curvature       → vowel frontness proxy
-    c3 = mfcc[3]   # mid-freq detail
-    hf_rough = abs(mfcc[6]) + abs(mfcc[7])  # high-freq roughness
+    # Normalised MFCC[0] (energy proxy) — scale to ~0-1 range
+    # MFCC[0] typically ranges -50 to +10 for speech
+    c0_norm = (mfcc[0] + 30.0) / 40.0
+    c1 = mfcc[1]   # spectral tilt → vowel height  (high=high vowel)
+    c2 = mfcc[2]   # spectral curvature → vowel frontness (high=front)
+    c3 = mfcc[3]   # mid-frequency detail
 
-    # ── Strong consonants (raised thresholds — fewer false positives) ──
-    # Sibilants: very high HF energy → c0 high, hf_rough high
-    if energy > 0.04 and hf_rough > 12.0:
-        return Viseme.V16_SH_ZH
-    if energy > 0.03 and hf_rough > 9.0:
-        return Viseme.V15_S_Z           # /s/, /z/
+    # ── Consonants (high c0, distinct high-frequency patterns) ──
+    # Sibilants (/s/, /z/, /ʃ/, /ʒ/): high energy in HF → c0 high, c3 positive
+    if c0_norm > 0.55:
+        hf_detail = abs(mfcc[6]) + abs(mfcc[7])  # high-freq roughness
+        if hf_detail > 8.0:
+            return Viseme.V16_SH_ZH      # /ʃ/, /ʒ/ — more hf energy
+        return Viseme.V15_S_Z            # /s/, /z/
 
-    # Fricatives: moderately high energy + broadband
-    if energy > 0.025 and abs(c3) > 5.0 and hf_rough > 6.0:
-        return Viseme.V18_F_V           # /f/, /v/
-    if energy > 0.02 and abs(c3) > 4.0 and hf_rough > 5.0:
-        return Viseme.V17_TH_DH         # /θ/, /ð/
+    # Fricatives (/f/, /v/, /θ/, /ð/): moderately high c0 + wide spectrum
+    if c0_norm > 0.35 and abs(c3) > 3.0:
+        if c1 < -1.0:
+            return Viseme.V18_F_V        # /f/, /v/ — lower tilt (labiodental)
+        return Viseme.V17_TH_DH          # /θ/, /ð/ — dental
 
-    # Stops: brief high-energy burst
-    if energy > 0.05 and c3 < -4.0:
-        return Viseme.V21_P_B_M         # bilabial
-    if energy > 0.03 and c3 < -3.0:
-        return Viseme.V19_T_D_N         # alveolar
+    # Stop bursts (/t/, /d/, /p/, /b/, /k/, /g/): sharp, brief → low energy, sharp c2
+    if energy < 0.02 and c0_norm > 0.2:
+        if abs(c2) > 2.5:
+            return Viseme.V19_T_D_N      # alveolar stops
+        if c1 < -2.0:
+            return Viseme.V21_P_B_M      # bilabial stops
+        return Viseme.V20_K_G_NG         # velar stops
 
-    # /h/: breathy — low energy, narrow spread
-    if energy < 0.015 and abs(c2) < 1.5 and abs(c1) < 3.0:
+    # /h/: breathy — low energy, spread spectrum
+    if energy < 0.015 and abs(c2) < 1.5:
         return Viseme.V12_H
 
-    # ── Vowels (default for most frames) ──
-    # c1 ≈ vowel height: very negative = high (close) vowel
-    # c2 ≈ vowel frontness: positive = front, negative = back
-    if c2 > 4.0:
-        if c1 > 2.0:
-            return Viseme.V06_IY_IH     # /i/, /ɪ/ — front high
-        return Viseme.V04_EH_EY         # /ɛ/, /eɪ/ — front mid
-    if c2 > 1.5:
-        if c1 > 1.0:
-            return Viseme.V01_AE_AH     # /æ/, /ʌ/ — front low
-        return Viseme.V01_AE_AH
-    if c2 > -1.0:
-        if c1 > 2.0:
-            return Viseme.V05_ER        # /ɝ/ — r-colored
-        return Viseme.V02_AA            # /ɑ/ — central low
-    if c1 > 3.0:
-        return Viseme.V08_OW            # /oʊ/ — back mid
-    if c1 > 4.0:
-        return Viseme.V03_AO            # /ɔ/ — back low-mid
-    return Viseme.V07_UW_W              # /u/, /w/ — back high
+    # /l/: lateral — mid-energy, specific MFCC pattern
+    if 0.02 < energy < 0.04 and abs(c1) < 2.0 and c3 > 1.0:
+        return Viseme.V14_L
+
+    # /r/: rhotic — unique MFCC signature (low c3 + neg c1)
+    if abs(c3) < 1.5 and c1 < -0.5:
+        return Viseme.V13_R
+
+    # ── Vowels: c1 ≈ vowel height, c2 ≈ vowel frontness ──
+    # c1 runs roughly -8 (low vowel) to +4 (high vowel)
+    # c2 runs roughly -4 (back) to +6 (front)
+
+    if c2 > 3.5:
+        return Viseme.V06_IY_IH          # /i/, /ɪ/ — front, spread
+    if c2 > 2.0:
+        return Viseme.V04_EH_EY          # /ɛ/, /eɪ/ — mid-front
+    if c2 > 0.8:
+        if c1 < -3.0:
+            return Viseme.V01_AE_AH      # /æ/, /ʌ/ — low, slightly front
+        return Viseme.V01_AE_AH          # /æ/, /ʌ/ (extended range)
+    if c2 > -1.5:
+        if c1 < -4.0:
+            return Viseme.V03_AO         # /ɔ/ — low, mid
+        if c1 < -3.0:
+            return Viseme.V05_ER         # /ɝ/ — mid, r-colored
+        if c1 < -2.0:
+            return Viseme.V02_AA         # /ɑ/ — low, back
+        return Viseme.V02_AA
+    # Back vowels
+    if c1 < -5.0:
+        return Viseme.V07_UW_W           # /u/, /w/ — very low, back
+    return Viseme.V08_OW                 # /oʊ/ — mid-low, back
 
 
 # ── Sliding-window chunk processor ──────────────────────────────

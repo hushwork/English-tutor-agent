@@ -332,8 +332,7 @@ def on_message(ws, message):
                           "/static/live2d/core/live2dcubismcore.min.js"]:
                     try: _hx.get(f"http://localhost:8200{p}", timeout=2)
                     except: pass
-                webbrowser.open("http://localhost:8200/static/face_preview.html")
-                print("   🔗 Emma 面部页面已打开")
+                print("   🔗 http://localhost:8200/static/face_preview.html")
             except Exception:
                 pass
 

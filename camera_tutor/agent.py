@@ -427,6 +427,8 @@ class CameraTutorAgent:
                 self._recent_emma_phrases.append(transcript)
                 if len(self._recent_emma_phrases) > 10:
                     self._recent_emma_phrases.pop(0)
+                # Inject updated instructions so model knows what it recently said
+                self._update_session_instructions()
                 # Log to memory
                 if self.memory:
                     self.memory.save_message("assistant", transcript)
@@ -554,6 +556,18 @@ class CameraTutorAgent:
 
     # ── Rich instruction builder ──────────────────────────────────
 
+    def _update_session_instructions(self) -> None:
+        """Send updated instructions to the model so it knows what it recently said."""
+        if self.connection is None or self.connection.ws is None:
+            return
+        try:
+            self.connection.ws.send(json.dumps({
+                "type": "session.update",
+                "session": {"instructions": self._build_instructions()},
+            }))
+        except Exception as e:
+            logger.debug("Session update error: %s", e)
+
     def _build_instructions(self) -> str:
         """Build a rich system prompt with child profile and vocabulary."""
         child_age = self._get_child_age()
@@ -605,7 +619,7 @@ class CameraTutorAgent:
             f"VISION: You receive real-time camera images — use what you SEE.\n\n"
             f"{session_info}{vocab_line}{errors_line}{due_line}{recent_line}"
             f"BEHAVIORAL GUIDELINES:\n"
-            f"1. MAXIMUM {w} words per sentence. ONE sentence only.\n"
+            f"1. MAXIMUM {w} words total. This is strict. ONE short sentence, then stop.\n"
             f"2. Use only simple words a {child_age}-year-old can understand.\n"
             f"3. NEVER repeat the same sentence structure you used recently.\n"
             f"4. Praise every attempt to speak English.\n"

@@ -27,7 +27,7 @@ class TutorPersona:
     id: str                          # Unique ID: "emma", "bella", "serena"
     name: str                        # Display name: "Emma", "Bella", "Serena"
     emoji: str                       # Avatar emoji
-    voice: str                       # Qwen-Omni voice parameter: "Cherry", "Bella", etc.
+    voice: str                       # Realtime API voice: Mia, Serena, Momo, Tina, Jennifer, Cherry, Raymond, Harvey, Evan, Ryan, Katerina
     description_cn: str              # Chinese description for parent UI
     description_en: str              # English self-intro
     child_age_min: int = 3
@@ -146,7 +146,7 @@ TUTOR_LIBRARY: dict[str, TutorPersona] = {
         id="emma",
         name="Emma",
         emoji="👩‍🏫",
-        voice="Cherry",
+        voice="Mia",  # 温柔生活博主 — 温暖自然的陪伴感
         description_cn="温暖的陪伴者，像最喜欢的阿姨一样聊天、玩耍、陪伴",
         description_en="Hi! I'm Emma — your warm, playful companion! Let's chat!",
         child_age_min=3,
@@ -160,7 +160,7 @@ TUTOR_LIBRARY: dict[str, TutorPersona] = {
         id="serena",
         name="Serena",
         emoji="👩‍💼",
-        voice="Serena",
+        voice="Serena",  # 温柔小姐姐 — 名字都匹配，完美
         description_cn="温柔安静的陪伴者，像奶奶一样让人安心，适合害羞的孩子",
         description_en="Hello dear, I'm Serena. Let's take our time and explore together.",
         child_age_min=3,
@@ -174,7 +174,7 @@ TUTOR_LIBRARY: dict[str, TutorPersona] = {
         id="bella",
         name="Bella",
         emoji="🧚",
-        voice="Tina",
+        voice="Momo",  # 撒娇搞怪 — 3-6岁小朋友的最爱
         description_cn="活泼搞怪的玩伴，把一切都变成游戏，适合喜欢玩闹的小朋友",
         description_en="Hi hi! I'm Bella! Let's play and have fun together! Yay!",
         child_age_min=3,
@@ -188,7 +188,7 @@ TUTOR_LIBRARY: dict[str, TutorPersona] = {
         id="sophie",
         name="Sophie",
         emoji="👩‍🔬",
-        voice="Tina",
+        voice="Tina",  # 甜甜暖暖 — 聪明但不含糊
         description_cn="好奇宝宝，喜欢探索和发现，适合爱思考的大孩子",
         description_en="Hey! I'm Sophie. I love wondering about things. What are you curious about?",
         child_age_min=6,
@@ -202,7 +202,7 @@ TUTOR_LIBRARY: dict[str, TutorPersona] = {
         id="olivia",
         name="Olivia",
         emoji="👩‍🎨",
-        voice="Serena",
+        voice="Jennifer",  # 电影质感美语 — 讲故事有画面感
         description_cn="创意梦想家，用故事和色彩看世界，适合爱想象的孩子",
         description_en="Oh, what shall we imagine today? I'm Olivia — I see stories everywhere!",
         child_age_min=4,

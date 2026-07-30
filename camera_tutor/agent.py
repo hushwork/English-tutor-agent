@@ -356,7 +356,8 @@ class CameraTutorAgent:
         if self.vision:
             self.vision.stop()
         if self.camera:
-            self.vision = VisionManager(camera=self.camera, ws_getter=lambda: ws)
+            self.vision = VisionManager(camera=self.camera, ws_getter=lambda: ws,
+                                         audio_ready=self.state.audio_started)
             self.vision.start()
 
         self._print_welcome()

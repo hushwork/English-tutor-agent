@@ -47,16 +47,20 @@ class VisionManager:
         self,
         camera: CameraPipeline,
         ws_getter,
+        audio_ready: Optional[threading.Event] = None,
     ):
         """Initialize VisionManager.
 
         Args:
-            camera: CameraPipeline instance (started externally).
-            ws_getter: Zero-argument callable returning the current
-                       WebSocketApp instance (or None).
+            camera: CameraPipeline instance.
+            ws_getter: Callable returning current WebSocketApp (or None).
+            audio_ready: Event set when first mic audio chunk is sent.
+                WS image push waits for this to avoid 'image before audio'
+                errors from the Omni API.
         """
         self._camera = camera
         self._ws_getter = ws_getter
+        self._audio_ready = audio_ready
         self.ws_interval: float = 5.0
 
         # Thread management
@@ -147,12 +151,14 @@ class VisionManager:
     def _preview_loop(self) -> None:
         """Periodically send frames to WebSocket + Dashboard HTTP.
 
-        WS images start after 2s delay — audio must arrive first
-        (Omni requires audio-before-image on session start)."""
+        WS images wait for audio_ready (mic has produced first chunk)
+        to honour Omni API ordering requirements."""
         last_keyframe_time = 0.0
         preview_interval = 0.2
-        _image_start = time.time() + 2.0  # wait for mic to produce audio
 
+        # Wait for audio before sending any WS images
+        if self._audio_ready is not None:
+            self._audio_ready.wait()
         while not self._stop_event.is_set():
             try:
                 b64 = self._latest_frame()
@@ -166,7 +172,7 @@ class VisionManager:
                 self._push_to_dashboard(b64)
 
                 # Push to WebSocket (rate-limited, starts after audio)
-                if now >= _image_start and now - last_keyframe_time >= self.ws_interval:
+                if now - last_keyframe_time >= self.ws_interval:
                     last_keyframe_time = now
                     self._push_to_websocket(b64)
 

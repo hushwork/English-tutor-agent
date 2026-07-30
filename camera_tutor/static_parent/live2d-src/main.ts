@@ -11,6 +11,7 @@ let _mouthId: any = null;
 let _vowelIds: Record<string, any> = {};
 let _stillIds: any[] = [];
 let _frameCount = 0;
+let _mouthCurrent = 0;
 
 // Viseme → Kei vowel param mapping
 const VISEME_VOWEL: Record<string, [string, number]> = {

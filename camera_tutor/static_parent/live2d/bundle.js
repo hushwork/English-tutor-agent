@@ -17741,6 +17741,7 @@ var _mouthId = null;
 var _vowelIds = {};
 var _stillIds = [];
 var _frameCount = 0;
+var _mouthCurrent = 0;
 var VISEME_VOWEL = {
   aa: ["ParamA", 1],
   ae: ["ParamA", 0.8],

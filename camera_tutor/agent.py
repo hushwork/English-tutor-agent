@@ -633,18 +633,19 @@ class CameraTutorAgent:
             f"VISION: You receive real-time camera images — use what you SEE.\n\n"
             f"{session_info}{vocab_line}{errors_line}{due_line}{recent_line}"
             f"BEHAVIORAL GUIDELINES:\n"
-            f"1. MAXIMUM {w} words total. This is strict. ONE short sentence, then stop.\n"
-            f"2. Use only simple words a {child_age}-year-old can understand.\n"
+            f"1. Keep it short — 1-2 sentences. But make them COUNT:\n"
+            f"   When the child asks 'What's this?' → teach, don't just label.\n"
+            f"   'That's a vase! People put flowers in it. Do you like flowers?'\n"
+            f"2. Ask questions back — keep the conversation going.\n"
             f"3. NEVER repeat the same sentence structure you used recently.\n"
-            f"4. Praise every attempt to speak English.\n"
-            f"5. If you SEE something interesting in the camera, mention it naturally.\n"
+            f"4. Praise effort, not just correctness. Vary your praise.\n"
+            f"5. If you SEE something interesting, connect it to the child's world.\n"
             f"6. You can see AND hear the child. Use your own judgment:\n"
-            f"   - If the child says they're tired → gentle, quieter, fewer words\n"
-            f"   - If the child seems deeply focused → stay silent, don't interrupt\n"
-            f"   - If the child is excited or playful → match their energy\n"
-            f"   - If nothing has happened for a while → be patient, don't force it\n"
+            f"   - If the child says they're tired → gentle, quieter\n"
+            f"   - If the child seems deeply focused → stay silent\n"
+            f"   - If the child is excited → match their energy, ask follow-ups\n"
             f"7. If the child struggles with a word, model it correctly.\n"
-            f"8. Use at least one word from the child's known vocabulary when possible.\n"
+            f"8. Use words from the child's known vocabulary when possible.\n"
         )
 
     def _get_child_age(self) -> int:
@@ -730,16 +731,18 @@ class CameraTutorAgent:
             if len(w) > 2 and w.isalpha() and w not in existing:
                 found.add(w)
 
-        # 2. All content words (>=3 chars, not in our stop list)
+        # 2. Content nouns/adjectives only — skip common verbs/adverbs
         stop_words = {
-            "the","and","for","that","you","are","this","all","not",
+            "the","and","for","that","you","are","this","all","not","but",
             "its","can","see","big","red","blue","like","good","great",
-            "yes","now","one","two","too","let","did","get","has","had",
-            "was","did","she","her","him","his","our","out","how","who",
-            "what","when","where","why","here","there","come","want",
-            "going","doing","been","very","just","about","your",
-            "hello","hi","hey","bye","please","thank","thanks",
-            "love","loves","make","made",
+            "yes","now","one","two","too","let","did","get","has","had","have",
+            "was","she","her","him","his","our","out","how","who",
+            "what","when","where","why","here","there","come","want","going",
+            "doing","been","very","just","about","your","from","with","will",
+            "well","some","more","than","then","them","they","into","over",
+            "hello","hi","hey","bye","please","thank","thanks","okay","yeah",
+            "love","loves","make","made","look","looks","looking","say","says",
+            "saying","ask","asking","tell","told","try","trying","know","think",
         }
         words = re.findall(r"\b([a-z]{3,})\b", clean)
         for w in words:

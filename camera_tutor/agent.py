@@ -71,6 +71,7 @@ class AgentConfig:
     mic_gain: float = 1.0         # Linear — leave at 1.0 unless diagnostic says otherwise
     mic_device_index: int | None = None  # Force a specific mic, or None for auto-detect
     server_vad_threshold: float = 0.5   # Server VAD sensitivity (lower = more sensitive)
+    tts_speed: float = 1.0        # Speech rate: 0.25-4.0 (1.0 = normal)
 
     def __post_init__(self):
         if not self.api_key:
@@ -360,6 +361,7 @@ class CameraTutorAgent:
             "session": {
                 "modalities": ["text", "audio"],
                 "voice": "Tina",
+                "speed": self.config.tts_speed,
                 "instructions": self._build_instructions(),
                 "input_audio_format": "pcm",
                 "output_audio_format": "pcm",

@@ -116,7 +116,7 @@ _browser_opened = False  # only open browser on first connect
 _camera_started = False  # ensure camera threads started only once
 
 def on_open(ws):
-    global _ws
+    global _ws, _camera_started
     _ws = ws
     print("✅ 连接已建立，可以说话了！")
     print(f"   Tutor: {tutor.emoji} {tutor.name} ({tutor.voice})")

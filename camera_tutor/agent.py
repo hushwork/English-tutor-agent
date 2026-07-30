@@ -701,25 +701,54 @@ class CameraTutorAgent:
             self._check_child_errors(text)
 
     def _extract_new_words(self, text: str) -> None:
+        """Extract new vocabulary from Emma's speech.
+
+        Catches:
+        1. Explicitly introduced words: 'This is a X', 'See the X'
+        2. Words Emma asks the child to say: 'Can you say X?'
+        3. All content words (nouns/adjectives/verbs) not already known
+        """
         import re
-        for _, word in re.findall(
+        if not self.sr or not self.memory:
+            return
+
+        clean = text.strip().lower()
+        existing = {v["word"].lower() for v in self.memory.get_vocabulary()}
+        found: set[str] = set()
+
+        # 1. Explicit introduction patterns
+        intro = re.findall(
             r"\b(this is|that is|it's a|it's an|here is|there is|"
-            r"see the|look at the|that's a|that's an)\s+(\w+)",
-            text, re.IGNORECASE,
-        ):
-            word = word.strip(".,!?'\"")
-            if len(word) > 2 and word[0].isalpha() and self.sr and self.memory:
-                self.sr.add_card(word, "", text[:100])
-                self.memory.add_new_word(word, "", text[:100])
-                logger.info("📝 New word tracked: %s", word)
-        for word in re.findall(
-            r"\b(\w{3,})\b.*(?:word|say|repeat|sound|letter)", text, re.IGNORECASE,
-        ):
-            word = word.strip(".,!?'\"")
-            if len(word) > 2 and word[0].isalpha() and self.sr and self.memory:
-                self.sr.add_card(word, "", text[:100])
-                self.memory.add_new_word(word, "", text[:100])
-                logger.info("📝 New word tracked (emphatic): %s", word)
+            r"see the|look at the|that's a|that's an|say the word|"
+            r"can you say|try saying)\s+(\w+)",
+            clean, re.IGNORECASE,
+        )
+        for _, word in intro:
+            w = word.strip(".,!?'\"")
+            if len(w) > 2 and w.isalpha() and w not in existing:
+                found.add(w)
+
+        # 2. All content words (>=3 chars, not in our stop list)
+        stop_words = {
+            "the","and","for","that","you","are","this","all","not",
+            "its","can","see","big","red","blue","like","good","great",
+            "yes","now","one","two","too","let","did","get","has","had",
+            "was","did","she","her","him","his","our","out","how","who",
+            "what","when","where","why","here","there","come","want",
+            "going","doing","been","very","just","about","your",
+            "hello","hi","hey","bye","please","thank","thanks",
+            "love","loves","make","made",
+        }
+        words = re.findall(r"\b([a-z]{3,})\b", clean)
+        for w in words:
+            if w not in stop_words and w not in existing:
+                found.add(w)
+
+        # Save all new words
+        for w in found:
+            self.sr.add_card(w, "", text[:100])
+            self.memory.add_new_word(w, "", text[:100])
+            logger.info("📝 New word: %s", w)
 
     def _check_child_errors(self, text: str) -> None:
         import re

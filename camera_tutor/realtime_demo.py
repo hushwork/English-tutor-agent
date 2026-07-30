@@ -121,9 +121,6 @@ state = _NS(
     face_ws=None,
     last_pushed_viseme=None,
     face_fallback_http=False,
-    sm_mouth_open=0.0,
-    sm_mouth_width=0.0,
-    sm_tongue=0.0,
 )
 
 def on_open(ws):
@@ -287,7 +284,7 @@ def _send_viseme_payload(payload: dict):
         pass
 
 def _push_face_viseme(viseme, full_transcript: str):
-    """Push viseme with EMA smoothing — mouth blends naturally between shapes."""
+    """Push viseme (must be Viseme object). Dedups unchanged labels."""
 
     if not isinstance(viseme, Viseme):
         return
@@ -298,19 +295,12 @@ def _push_face_viseme(viseme, full_transcript: str):
     try:
         from camera_tutor.live2d_bridge import VisemeParams
         p = VisemeParams.from_viseme(viseme)
-
-        # EMA smoothing: blend towards target (α=0.35 → ~100ms to converge)
-        alpha = 0.35
-        state.sm_mouth_open += alpha * (p.mouth_open - state.sm_mouth_open)
-        state.sm_mouth_width += alpha * (p.mouth_width - state.sm_mouth_width)
-        state.sm_tongue += alpha * (p.tongue_visible - state.sm_tongue)
-
         _send_viseme_payload({
             "type": "viseme",
             "viseme": viseme.label,
-            "mouth_open": round(state.sm_mouth_open, 3),
-            "mouth_width": round(state.sm_mouth_width, 3),
-            "tongue_visible": round(state.sm_tongue, 3),
+            "mouth_open": p.mouth_open,
+            "mouth_width": p.mouth_width,
+            "tongue_visible": p.tongue_visible,
             "transcript": full_transcript,
         })
     except Exception:

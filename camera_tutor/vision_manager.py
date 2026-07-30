@@ -57,6 +57,7 @@ class VisionManager:
         """
         self._camera = camera
         self._ws_getter = ws_getter
+        self.ws_interval: float = 5.0
 
         # Thread management
         self._stop_event = threading.Event()

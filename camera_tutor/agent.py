@@ -596,18 +596,31 @@ class CameraTutorAgent:
                 f"Try to naturally use these words: {', '.join(due_words)}\n"
             )
 
-        # Recent phrases Emma used (avoid repetition)
-        recent_phrases = self._recent_emma_phrases[-4:]
+        # Recent phrases (use memory for full history, cap at 8 for prompt)
+        recent_phrases = []
+        if self.memory:
+            # Get last 12 messages, filter Emma's responses
+            ctx = self.memory.get_context(max_messages=24)
+            recent_phrases = [
+                m["content"][:80]
+                for m in ctx[-12:] if m.get("role") == "assistant"
+            ][-8:]
         recent_line = ""
         if recent_phrases:
             recent_line = (
-                f"\nYOUR RECENT RESPONSES (do NOT repeat these):\n"
+                f"\n⚠️  YOU ALREADY SAID THESE (SAY SOMETHING DIFFERENT):\n"
             )
             for i, p in enumerate(recent_phrases, 1):
-                recent_line += f"  {i}. \"{p[:60]}...\"\n"
-            recent_line += (
-                f"\nUse completely different words and sentence structures.\n"
-            )
+                recent_line += f"  {i}. \"{p}\"\n"
+            # Also check frequently-used words
+            if self.memory:
+                vocab = self.memory.get_vocabulary()
+                if len(vocab) > 10:
+                    top_words = [v["word"] for v in vocab[-5:]]
+                    recent_line += (
+                        f"\nWords you use a lot (try DIFFERENT ones): "
+                        f"{', '.join(top_words)}\n"
+                    )
 
         return (
             f"You are {self.tutor.name}, a {self.tutor.teaching_style} English tutor "

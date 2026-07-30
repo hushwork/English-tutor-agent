@@ -396,7 +396,9 @@ class CameraTutorAgent:
 
         if event_type == "session.updated":
             self.state.session_ready.set()
-            self._notify_browser_ready()
+            if not getattr(self, "_link_printed", False):
+                self._link_printed = True
+                self._notify_browser_ready()
 
         elif event_type == "input_audio_buffer.speech_started":
             self.state.audio_started.set()

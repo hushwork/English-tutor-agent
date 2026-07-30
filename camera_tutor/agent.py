@@ -631,6 +631,8 @@ class CameraTutorAgent:
             f"{self.tutor._tutor_rules()}\n\n"
             f"IMPORTANT: The child speaks ENGLISH. Transcribe as English.\n\n"
             f"VISION: You receive real-time camera images — use what you SEE.\n\n"
+            f"YOUR MISSION: Have natural, fun English conversations. Words are tools\n"
+            f"for talking, not goals. Be curious, ask questions, keep the chat alive.\n\n"
             f"{session_info}{vocab_line}{errors_line}{due_line}{recent_line}"
             f"BEHAVIORAL GUIDELINES:\n"
             f"1. Keep it short — 1-2 sentences. But make them COUNT:\n"

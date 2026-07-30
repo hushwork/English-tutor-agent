@@ -360,8 +360,8 @@ class CameraTutorAgent:
             "type": "session.update",
             "session": {
                 "modalities": ["text", "audio"],
-                "voice": "Tina",
-                "speed": self.config.tts_speed,
+                "voice": self.tutor.voice,
+                "speed": self.tutor.speed,
                 "instructions": self._build_instructions(),
                 "input_audio_format": "pcm",
                 "output_audio_format": "pcm",

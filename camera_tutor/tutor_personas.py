@@ -35,6 +35,7 @@ class TutorPersona:
     teaching_style: str = "warm"     # warm | playful | gentle | energetic
     personality_traits: list[str] = field(default_factory=list)
     age_appearance: str = "25"       # How old the tutor appears
+    speed: float = 1.0               # TTS speech rate: 0.25-4.0
 
     def system_prompt_guidance(self) -> str:
         """Generate age-appropriate language guidance for LLM prompts."""
@@ -153,6 +154,7 @@ TUTOR_LIBRARY: dict[str, TutorPersona] = {
         teaching_style="warm",
         personality_traits=["encouraging", "patient", "warm", "cheerful"],
         age_appearance="28",
+        speed=1.0,
     ),
     "serena": TutorPersona(
         id="serena",
@@ -166,6 +168,7 @@ TUTOR_LIBRARY: dict[str, TutorPersona] = {
         teaching_style="gentle",
         personality_traits=["soft-spoken", "calm", "gentle", "nurturing"],
         age_appearance="32",
+        speed=0.8,
     ),
     "bella": TutorPersona(
         id="bella",
@@ -179,6 +182,7 @@ TUTOR_LIBRARY: dict[str, TutorPersona] = {
         teaching_style="playful",
         personality_traits=["playful", "silly", "energetic", "childlike"],
         age_appearance="20",
+        speed=1.25,
     ),
     "sophie": TutorPersona(
         id="sophie",
@@ -192,6 +196,7 @@ TUTOR_LIBRARY: dict[str, TutorPersona] = {
         teaching_style="energetic",
         personality_traits=["curious", "smart", "energetic", "inspiring"],
         age_appearance="24",
+        speed=1.15,
     ),
     "olivia": TutorPersona(
         id="olivia",
@@ -205,6 +210,7 @@ TUTOR_LIBRARY: dict[str, TutorPersona] = {
         teaching_style="warm",
         personality_traits=["creative", "imaginative", "warm", "artistic"],
         age_appearance="26",
+        speed=0.9,
     ),
 }
 

@@ -180,7 +180,6 @@ def on_open(ws):
                 cap = camera._cap
                 if cap is None:
                     return
-                frame_interval = 1.0 / max(camera.fps, 1)
                 while state.running:
                     try:
                         ret, img = cap.read()
@@ -192,7 +191,9 @@ def on_open(ws):
                                 _camera_latest_b64[0] = b64
                     except Exception:
                         pass
-                    time.sleep(frame_interval)
+                    # Only throttle on miss — keep buffer drained on hit
+                    if not ret:
+                        time.sleep(0.05)
             threading.Thread(target=_camera_reader, daemon=True).start()
 
             def _camera_preview():

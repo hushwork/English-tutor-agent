@@ -662,7 +662,7 @@ class CameraTutorAgent:
                 self.sr.add_card(word, "", text[:100])
                 self.memory.add_new_word(word, "", text[:100])
                 logger.info("📝 New word tracked: %s", word)
-        for (word,) in re.findall(
+        for word in re.findall(
             r"\b(\w{3,})\b.*(?:word|say|repeat|sound|letter)", text, re.IGNORECASE,
         ):
             word = word.strip(".,!?'\"")

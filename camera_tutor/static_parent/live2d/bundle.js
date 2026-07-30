@@ -17802,7 +17802,9 @@ window._setMouthOpen = (open, viseme) => {
   const m = d._subdelegates?.[0]?._live2dManager?._models?.[0]?.getModel?.();
   if (m) {
     for (const id of _stillIds) m.setParameterValueById(id, 0);
-    const scaled = _mouthTarget < 0.06 ? 0 : Math.min(1, _mouthTarget * 2.5);
+    // Smooth mouth towards target (prevents jerky jumps)
+    _mouthCurrent = (_mouthCurrent || 0) + (_mouthTarget - (_mouthCurrent || 0)) * 0.35;
+    const scaled = _mouthCurrent < 0.06 ? 0 : Math.min(1, _mouthCurrent * 2.5);
     m.setParameterValueById(_mouthId, scaled);
     const [vowelParam, strength] = VISEME_VOWEL[_visemeType] || ["", 0];
     for (const id of Object.values(_vowelIds)) m.setParameterValueById(id, 0);

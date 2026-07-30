@@ -315,49 +315,47 @@ async def reset_emma_face():
 
 @app.websocket("/ws/emma/face")
 async def ws_emma_face(websocket: WebSocket):
+    """Browser clients — receives typed events: {"type":"viseme",...} {"type":"camera",...}"""
     await websocket.accept()
     _face_clients.add(websocket)
     try:
-        # Send current state immediately
-        await websocket.send_json(_emma_face)
-        # Keep connection alive (wait for disconnect)
+        await websocket.send_json({"type": "init", "viseme": "rest",
+                                    "mouth_open": 0.0, "mouth_width": 0.0,
+                                    "tongue_visible": 0.0})
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
         _face_clients.discard(websocket)
 
-async def _broadcast_face():
-    """Push face state to all connected WebSocket clients."""
+@app.websocket("/ws/emma/source")
+async def ws_emma_source(websocket: WebSocket):
+    """realtime_demo.py pushes typed events — relayed directly to browsers."""
+    await websocket.accept()
+    try:
+        while True:
+            data = await websocket.receive_json()
+            import asyncio
+            asyncio.create_task(_broadcast_event(data))
+    except WebSocketDisconnect:
+        pass
+
+async def _broadcast_event(data: dict):
+    """Relay a typed event to all browser WS clients."""
     dead = set()
     for ws in _face_clients:
         try:
-            await ws.send_json(_emma_face)
-        except Exception as e:
-            print(f"[BROADCAST ERROR] {e}")
+            await ws.send_json(data)
+        except Exception:
             dead.add(ws)
     _face_clients.difference_update(dead)
 
-@app.get("/api/emma/face")
-async def get_emma_face():
-    """Get Emma's current face state (updated in real-time by realtime_demo)."""
-    return _emma_face
-
-@app.post("/api/emma/face")
-async def set_emma_face(data: dict):
-    """Update Emma's face state (called by realtime_demo)."""
-    _emma_face.update(data)
-    import asyncio
-    asyncio.create_task(_broadcast_face())
-    return {"ok": True}
-
+# Camera frames arrive via HTTP POST (1fps) — broadcast as typed event
 @app.post("/api/emma/camera")
 async def set_camera_frame(data: dict):
-    """Push camera frame for live preview (called by realtime_demo)."""
     frame = data.get("camera_frame", "")
     if frame:
-        _emma_face["camera_frame"] = frame
         import asyncio
-        asyncio.create_task(_broadcast_face())
+        asyncio.create_task(_broadcast_event({"type": "camera", "camera_frame": frame}))
     return {"ok": True}
 
 

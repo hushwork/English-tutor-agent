@@ -27,7 +27,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from camera_tutor.tutor_personas import get_active_tutor
 from camera_tutor.camera import CameraPipeline
 from camera_tutor.avatar import EmmaAvatar, Viseme
-from camera_tutor.phoneme_dict import word_to_viseme_timeline
 from _thread import interrupt_main
 
 # ── Audio setup ──────────────────────────────────────────────────
@@ -114,6 +113,7 @@ _last_audio_time = [0.0]  # for response.create fallback
 _audio_started = threading.Event()
 _session_ready = threading.Event()
 _browser_opened = False  # only open browser on first connect
+_camera_started = False  # ensure camera threads started only once
 
 def on_open(ws):
     global _ws
@@ -163,200 +163,155 @@ def on_open(ws):
 
     # 启动摄像头发送线程（等 session 确认 + 音频就绪后再发图像）
     if camera:
-        def send_camera():
-            _session_ready.wait()
-            _audio_started.wait()
-            print("   📷 Camera streaming started")
-            last_send = 0
-            while _running:
-                try:
-                    frame = camera.capture()
-                    if frame:
-                        jpg = cv2.imencode('.jpg', frame.image, [cv2.IMWRITE_JPEG_QUALITY, 50])[1]
-                        b64 = base64.b64encode(jpg).decode()
-                        # Always push preview to dashboard
+        # Camera reader: singleton — started once, not recreated on reconnect
+        if not _camera_started:
+            _camera_started = True
+            _camera_latest_b64 = [None]
+            _camera_frame_lock = threading.Lock()
+
+            def _camera_reader():
+                cap = camera._cap
+                if cap is None:
+                    return
+                frame_interval = 1.0 / max(camera.fps, 1)
+                while _running:
+                    try:
+                        ret, img = cap.read()
+                        if ret:
+                            img = cv2.resize(img, (360, 360))
+                            jpg = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 50])[1]
+                            b64 = base64.b64encode(jpg).decode()
+                            with _camera_frame_lock:
+                                _camera_latest_b64[0] = b64
+                    except Exception:
+                        pass
+                    time.sleep(frame_interval)
+            threading.Thread(target=_camera_reader, daemon=True).start()
+
+            def _camera_preview():
+                _session_ready.wait()
+                _audio_started.wait()
+                print("   📷 Camera streaming started")
+                last_keyframe_time = 0
+                while _running:
+                    try:
+                        with _camera_frame_lock:
+                            b64 = _camera_latest_b64[0]
+                        if b64 is None:
+                            time.sleep(0.1)
+                            continue
                         try:
                             import httpx
                             httpx.post("http://localhost:8200/api/emma/camera",
-                                json={"camera_frame": b64}, timeout=1)
+                                json={"camera_frame": b64}, timeout=2)
                         except: pass
-                        if frame.is_key_frame or time.time() - last_send > 10:
-                            if not frame.is_key_frame:
-                                last_send = time.time()  # reset on 10s fallback
-                            if frame.is_key_frame:
-                                last_send = time.time()
+                        now = time.time()
+                        if now - last_keyframe_time > 2:
+                            last_keyframe_time = now
                             ws.send(json.dumps({
                                 "type": "input_image_buffer.append", "image": b64
                             }))
-                    time.sleep(1)
-                except Exception:
-                    time.sleep(1)
-        threading.Thread(target=send_camera, daemon=True).start()
+                        time.sleep(0.2)
+                    except Exception:
+                        time.sleep(0.3)
+            threading.Thread(target=_camera_preview, daemon=True).start()
 
-# ── Whisper-aligned face sync ───────────────────────────────
-# Buffers audio, runs faster-whisper on transcript.done for word-level
-# timestamps, then plays audio + viseme in perfect sync.
-# Adds only ~0.3s whisper inference delay (tiny model, CPU).
-_buffer_audio: list[bytes] = []
-_buffer_transcript: list[str] = []
-_buffer_seq_id = 0
-_face_timer = None
-_face_seq_id = 0
-_whisper_model = None  # lazy init
-_whisper_lock = threading.Lock()  # prevent race between preload and first use
 
-def _get_whisper():
-    global _whisper_model
-    if _whisper_model is not None:
-        return _whisper_model
-    with _whisper_lock:
-        if _whisper_model is not None:  # double-check
-            return _whisper_model
-        from faster_whisper import WhisperModel
-        import os
-        os.environ["HF_HUB_OFFLINE"] = "1"
-        print("   ⏳ Loading whisper tiny model...", flush=True)
-        _whisper_model = WhisperModel("tiny", device="cpu", compute_type="int8")
-        print("   ✅ Whisper ready", flush=True)
-        return _whisper_model
 
-def _push_face_viseme(word_or_viseme, full_transcript: str):
-    """Push viseme params to dashboard. Accepts word string or Viseme object."""
+# ── Formant-based viseme sync (inline, zero-latency) ──────────
+# Viseme is computed directly from each audio delta chunk as it
+# arrives — no ring buffer, no polling thread, no timing drift.
+# Audio plays and mouth moves in perfect sync by construction.
+
+_current_transcript = ""  # for dashboard display only
+
+_face_ws = None  # persistent WebSocket to dashboard /ws/emma/source
+_last_pushed_viseme = None  # dedup viseme label
+_face_fallback_http = False  # True if WS failed, use HTTP POST instead
+
+def _init_face_ws():
+    """Connect to dashboard WebSocket for low-latency face + camera push.
+    Falls back to HTTP POST if WebSocket is unavailable (old dashboard)."""
+    global _face_ws, _face_fallback_http
+    import websocket as _wslib
+    import time as _t
+    for attempt in range(5):  # reduced from 10 — fail fast if old server
+        try:
+            _face_ws = _wslib.create_connection(
+                "ws://localhost:8200/ws/emma/source", timeout=2)
+            print("   ✅ Face WS connected to dashboard")
+            _face_fallback_http = False
+            return
+        except Exception as e:
+            if attempt == 0:
+                print(f"   ⚠️ WS connect failed ({e}), retrying...")
+            _t.sleep(0.5)
+    # Fallback: use HTTP POST (works with old dashboard too)
+    _face_fallback_http = True
+    print("   ⚠️ WS unavailable, falling back to HTTP POST for face sync")
+
+def _send_viseme_payload(payload: dict):
+    """Send viseme via WS, with auto-reconnect + HTTP fallback."""
+    global _face_ws, _face_fallback_http
+
+    # WebSocket path
+    if _face_ws is not None and not _face_fallback_http:
+        try:
+            _face_ws.send(json.dumps(payload))
+            return
+        except Exception:
+            try: _face_ws.close()
+            except: pass
+            _face_ws = None
+
+    # Try reconnect once
+    if _face_ws is None and not _face_fallback_http:
+        try:
+            import websocket as _wslib
+            _face_ws = _wslib.create_connection(
+                "ws://localhost:8200/ws/emma/source", timeout=1)
+            _face_ws.send(json.dumps(payload))
+            return
+        except Exception:
+            _face_ws = None
+
+    # HTTP fallback
+    try:
+        import httpx
+        httpx.post("http://localhost:8200/api/emma/face", json=payload, timeout=1)
+    except Exception:
+        pass
+
+def _push_face_viseme(viseme, full_transcript: str):
+    """Push viseme (must be Viseme object). Dedups unchanged labels."""
+    global _last_pushed_viseme
+
+    if not isinstance(viseme, Viseme):
+        return
+    if viseme.label == _last_pushed_viseme:
+        return
+    _last_pushed_viseme = viseme.label
+
     try:
         from camera_tutor.live2d_bridge import VisemeParams
-        
-        if isinstance(word_or_viseme, Viseme):
-            viseme = word_or_viseme
-        elif not word_or_viseme or not str(word_or_viseme).strip():
-            viseme = Viseme.V00_SIL
-        else:
-            viseme = emma_avatar._word_to_viseme(str(word_or_viseme))
-        
         p = VisemeParams.from_viseme(viseme)
-        mouth_open, tongue_visible, mouth_width, viseme_label = \
-            p.mouth_open, p.tongue_visible, p.mouth_width, viseme.label
-        
-        import httpx
-        httpx.post("http://localhost:8200/api/emma/face", json={
-            "viseme": viseme_label, "mouth_open": mouth_open,
-            "mouth_width": mouth_width, "tongue_visible": tongue_visible,
+        _send_viseme_payload({
+            "type": "viseme",
+            "viseme": viseme.label,
+            "mouth_open": p.mouth_open,
+            "mouth_width": p.mouth_width,
+            "tongue_visible": p.tongue_visible,
             "transcript": full_transcript,
-        }, timeout=1)
-    except Exception as e:
-        print(f"  ⚠️ face push error: {e}")
+        })
+    except Exception:
+        pass
 
-def _build_wav(samples: bytes) -> bytes:
-    """Wrap raw 24kHz 16bit mono PCM in a minimal WAV header."""
-    import struct
-    data_len = len(samples)
-    header = struct.pack(
-        '<4sI4s4sIHHIIHH4sI',
-        b'RIFF', 36 + data_len, b'WAVE',
-        b'fmt ', 16, 1, 1, 24000, 24000 * 2, 2, 16,
-        b'data', data_len
-    )
-    return header + samples
 
-def _flush_whisper_sync():
-    """Run whisper alignment, then play audio + viseme in sync."""
-    global _buffer_audio, _buffer_transcript, _buffer_seq_id, _face_timer, _face_seq_id
-    if not _buffer_audio:
-        return
-    _buffer_seq_id += 1
-    seq = _buffer_seq_id
-
-    audio_chunks = _buffer_audio[:]
-    transcript = " ".join(_buffer_transcript).strip()
-    _buffer_audio = []
-    _buffer_transcript = []
-
-    words = transcript.split()
-    # 计算音频总时长（24kHz 16bit mono）
-    total_duration = sum(len(c) for c in audio_chunks) / (24000 * 2)
-    if total_duration < 0.5:
-        # 音频太短（<0.5s），whisper 时间戳不可靠，直接播放
-        for chunk in audio_chunks:
-            spk.write(chunk)
-        return
-
-    # Build WAV in memory, run whisper
-    try:
-        wav = _build_wav(b"".join(audio_chunks))
-        model = _get_whisper()
-        import io
-        segments, _ = model.transcribe(
-            io.BytesIO(wav), word_timestamps=True,
-            language="en", beam_size=1,
-            vad_filter=False, initial_prompt=transcript,
-        )
-        word_times = []
-        for seg in segments:
-            if seg.words:
-                for w in seg.words:
-                    word_times.append((w.word.strip(',.!?\'"'), w.start, w.end))
-    except Exception as e:
-        print(f"  ⚠️ whisper failed: {e}, fallback to direct play")
-        for chunk in audio_chunks:
-            spk.write(chunk)
-        return
-
-    if not word_times:
-        for chunk in audio_chunks:
-            spk.write(chunk)
-        return
-
-    # Cancel previous face timer
-    if _face_timer:
-        _face_timer.cancel()
-    _face_seq_id += 1
-    fseq = _face_seq_id
-
-    # Build phoneme-level viseme timeline from word timestamps
-    viseme_timeline = []
-    for w, start_s, end_s in word_times:
-        if not w:
-            continue
-        viseme_timeline.extend(word_to_viseme_timeline(w, start_s, end_s))
-
-    # Play audio + drive viseme by clock (synchronized)
-    def _play_with_viseme():
-        import time as _t
-        start_clock = _t.time()
-        v_idx = 0
-        total_chunks = len(audio_chunks)
-
-        for ci, chunk in enumerate(audio_chunks):
-            if seq != _buffer_seq_id:
-                break
-
-            # Write audio
-            spk.write(chunk)
-
-            # Calculate elapsed time (approximate from chunk progress)
-            # 24kHz 16bit mono → 48000 bytes/sec
-            chunk_duration = len(chunk) / 48000.0
-            elapsed = (ci + 1) * chunk_duration
-
-            # Push visemes whose scheduled time <= elapsed
-            while v_idx < len(viseme_timeline) and viseme_timeline[v_idx][0] <= elapsed:
-                v = viseme_timeline[v_idx][1]
-                _push_face_viseme(v, transcript)
-                v_idx += 1
-
-        # Push any remaining visemes
-        while v_idx < len(viseme_timeline):
-            _push_face_viseme(viseme_timeline[v_idx][1], transcript)
-            v_idx += 1
-
-        # Reset face after playback
-        if seq == _buffer_seq_id:
-            _push_face_viseme(Viseme.V00_SIL, transcript)
-
-    threading.Thread(target=_play_with_viseme, daemon=True).start()
 
 
 def on_message(ws, message):
-    global _buffer_audio, _buffer_transcript, _browser_opened
+    global _current_transcript, _browser_opened, _last_pushed_viseme
+
     try:
         event = json.loads(message)
     except json.JSONDecodeError:
@@ -364,7 +319,6 @@ def on_message(ws, message):
 
     event_type = event.get("type", "")
 
-    # Debug: 临时事件日志
     if event_type != "response.audio.delta":
         print(f"  [event] {event_type}", flush=True)
 
@@ -383,24 +337,33 @@ def on_message(ws, message):
             except Exception:
                 pass
 
+    # ── AUDIO: play + spectral viseme (pure audio-driven, zero latency) ──
     if event_type == "response.audio.delta":
-        # Buffer audio for whisper-aligned playback
-        _buffer_audio.append(base64.b64decode(event["delta"]))
+        chunk = base64.b64decode(event["delta"])
+        spk.write(chunk)  # Play immediately
+
+        try:
+            from camera_tutor.spectral_viseme import chunk_to_visemes
+            for v in chunk_to_visemes(chunk, RATE_SPK):
+                _push_face_viseme(v, _current_transcript)
+        except Exception:
+            pass
 
     elif event_type == "response.audio_transcript.delta":
         delta = event.get("delta", "")
         if delta:
-            _buffer_transcript.append(delta)
+            _current_transcript += delta
 
     elif event_type == "response.audio_transcript.done":
         transcript = event.get("transcript", "")
         if transcript:
             print(f"  🤖 {tutor.name}: {transcript}")
-            _buffer_transcript = [transcript]
-        _flush_whisper_sync()
+            _current_transcript = transcript
 
     elif event_type == "response.audio.done":
-        _flush_whisper_sync()
+        _last_pushed_viseme = None
+        _push_face_viseme(Viseme.V00_SIL, "")
+        _current_transcript = ""
 
     elif event_type == "conversation.item.input_audio_transcription.completed":
         child_text = event.get("transcript", "")
@@ -422,7 +385,10 @@ def on_close(ws, status, msg):
 # ── Dashboard auto-start ──────────────────────────────────────
 
 def _start_dashboard(port: int = 8200):
-    """Start the dashboard server in a background thread if not already running."""
+    """Start the dashboard server in a background thread.
+
+    If port is already occupied (e.g. dashboard started separately),
+    we skip startup — the HTTP/WS fallback in _init_face_ws handles it."""
     import httpx
     try:
         r = httpx.get(f"http://localhost:{port}/api/health", timeout=0.5)
@@ -479,15 +445,15 @@ print()
 # 自动启动 Dashboard（提供面部动画 WebSocket 广播 + 静态页面）
 _start_dashboard(8200)
 
-# 预加载 Whisper 模型（避免首次说话延迟）
-_get_whisper()
+_init_face_ws()  # connect dashboard WebSocket for face/camera push
 
-# 清空上次的嘴型状态
-import httpx
-try:
-    httpx.post("http://localhost:8200/api/emma/face/reset", timeout=1)
-except Exception:
-    pass
+# 清空上次的嘴型状态 (via WebSocket)
+if _face_ws:
+    try:
+        _face_ws.send(json.dumps({"type": "viseme", "viseme": "rest",
+            "mouth_open": 0.0, "mouth_width": 0.0, "tongue_visible": 0.0,
+            "transcript": ""}))
+    except: pass
 
 print()
 

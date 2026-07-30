@@ -12,6 +12,9 @@
 你有 MacBook Pro + Brio 100 + Poly Sync 20？
   → 走 §A: MacBook 快速启动（10 分钟，云端 API，几乎免费）
 
+你有 x86 台式机 + NVIDIA GPU (RTX 3060 12GB+)？
+  → 走 §C: 桌面 GPU 本地部署（30 分钟，全本地，零云端依赖）
+
 你有 Jetson AGX Orin + 全套外设？
   → 走 §B: Orin 全本地部署（2-4 小时，数据不出门）
 ```
@@ -257,9 +260,21 @@ python3 -c "import torch; print(f'CUDA: {torch.cuda.is_available()}')"
 
 ---
 
-### B.3 部署 Qwen2.5-Omni-7B
+### B.3 部署 Qwen2.5-Omni-7B（量化）
 
-### B.3.1 下载模型
+> Orin 64GB 可选 FP16（原始精度）或 INT4 量化。量化后推理速度提升 2-3x，
+> VRAM 占用从 ~19GB 降至 ~8GB，对低延迟场景至关重要。
+
+### B.3.1 选择量化级别
+
+| 量化 | 模型大小 | 推理速度 | 英语质量 | 适合 |
+|------|---------|---------|---------|------|
+| **FP16（无量化）** | ~19 GB | 基准 | 最佳 | AGX Orin 64GB 开发调优 |
+| **Q8_0** | ~13 GB | 1.5x | 几乎无损 | AGX Orin 64GB 生产 |
+| **Q4_K_M（推荐）** | ~8.2 GB | 2-3x | <1% 损失 | Orin NX 16GB / AGX Orin 低功耗 |
+| **IQ3_M** | ~7.0 GB | 2.5-3.5x | ~2-3% 损失 | Orin Nano 8GB（极限） |
+
+### B.3.2 下载模型
 
 ```bash
 # 安装 modelscope（国内下载更快）
@@ -278,10 +293,48 @@ ls -lh /mnt/ssd/models/Qwen2.5-Omni-7B/
 # 应有: config.json, model.safetensors, tokenizer.json 等
 ```
 
-### B.3.2 基础加载测试
+### B.3.3 量化模型
+
+**方式 A：使用项目量化脚本（推荐）**
+
+```bash
+# INT4 量化（产出一个 .gguf 文件）
+python3 scripts/quantize_omni.py \
+    --model_path /mnt/ssd/models/Qwen2.5-Omni-7B \
+    --output_path /mnt/ssd/models/Qwen2.5-Omni-7B-Q4_K_M.gguf \
+    --bits 4
+
+# 验证大小
+ls -lh /mnt/ssd/models/Qwen2.5-Omni-7B-Q4_K_M.gguf
+# 预期: ~6.2 GB
+```
+
+**方式 B：手动用 llama.cpp convert + quantize**
+
+```bash
+# 编译 llama.cpp
+git clone https://github.com/ggerganov/llama.cpp
+cd llama.cpp
+cmake -B build -DGGML_CUDA=ON
+cmake --build build -j$(nproc)
+
+# 转换 HF 模型 → GGUF FP16
+python3 convert_hf_to_gguf.py \
+    /mnt/ssd/models/Qwen2.5-Omni-7B \
+    --outtype f16 \
+    --outfile /mnt/ssd/models/Qwen2.5-Omni-7B-FP16.gguf
+
+# 量化 FP16 → Q4_K_M
+./build/bin/llama-quantize \
+    /mnt/ssd/models/Qwen2.5-Omni-7B-FP16.gguf \
+    /mnt/ssd/models/Qwen2.5-Omni-7B-Q4_K_M.gguf \
+    Q4_K_M
+```
+
+### B.3.4 基础加载测试
 
 ```python
-# test_load.py
+# test_load.py — Transformers 加载（FP16，非量化）
 from transformers import Qwen2_5OmniModel, Qwen2_5OmniProcessor
 import torch, time
 
@@ -305,17 +358,40 @@ print(processor.decode(outputs[0]))
 ```bash
 python3 test_load.py
 # 预期: 30s 内加载完成，输出一句英文描述
+
+# 量化模型测试（llama.cpp）
+./build/bin/llama-cli \
+    -m /mnt/ssd/models/Qwen2.5-Omni-7B-Q4_K_M.gguf \
+    --mmproj /mnt/ssd/models/qwen2.5-omni-vision.gguf \
+    -p "Describe a red car in one simple sentence." \
+    -ngl 99 \
+    -c 4096 \
+    -n 50
+# 预期: 3-5s 内输出一句描述（Jetson AGX Orin）
 ```
 
-### B.3.3 启动本地推理服务
+### B.3.5 启动本地推理服务
 
 ```bash
-# 使用项目中的推理服务脚本
+# 方式 A：项目自带的 omni_server.py（基于 Transformers，FP16 推理）
 python3 camera_tutor/omni_server.py &
+
+# 方式 B：llama.cpp server（量化模型，性能更优，推荐）
+./build/bin/llama-server \
+    -m /mnt/ssd/models/Qwen2.5-Omni-7B-Q4_K_M.gguf \
+    --mmproj /mnt/ssd/models/qwen2.5-omni-vision.gguf \
+    --host 0.0.0.0 --port 8100 \
+    -ngl 99 \
+    -c 4096 \
+    --mlock &
+
 # 验证
 curl http://localhost:8100/api/health
 # 应返回: {"status":"ok"}
 ```
+
+> **性能提示**：`-ngl 99` 将所有层加载到 GPU（AGX Orin 64GB UMA）。
+> Orin NX 16GB 推荐 `-ngl 40`，`--mlock` 锁定内存防止 swap。
 
 ---
 
@@ -481,3 +557,161 @@ python3 scripts/quantize_omni.py \
 ---
 
 > 全部绿色打勾 → Camera Tutor 已就绪。下一步：家庭 Alpha 测试（参见 `USER_TEST_PLAN.md`）。
+
+---
+
+## C. x86 桌面 GPU 本地部署（推荐开发阶段）
+
+> 适用：x86 台式机 + NVIDIA GPU (RTX 3060 12GB+, RTX 4060 Ti 16GB+)
+> 推理：本地 Qwen2.5-Omni-7B Q4_K_M 量化，llama.cpp server
+> 时间：~30 分钟 | 费用：电费 ~¥15-30/月
+> 优势：完全本地，零云端，儿童数据不出门
+
+### C.1 硬件要求
+
+| 最低配置 | 推荐配置 |
+|---------|---------|
+| RTX 3060 12GB | RTX 4060 Ti 16GB |
+| 16 GB 系统内存 | 32 GB 系统内存 |
+| Ubuntu 22.04 / Arch Linux | Ubuntu 22.04 |
+| USB 摄像头 + USB 麦克风/音箱 | Logitech Brio 100 + Poly Sync 20 |
+
+### C.2 安装 NVIDIA 驱动与 CUDA
+
+```bash
+# Ubuntu 22.04
+sudo apt update
+sudo apt install -y nvidia-driver-535 cuda-toolkit-12-4
+sudo reboot
+
+# 验证
+nvidia-smi
+# 应显示: Driver 535.x, CUDA 12.4, VRAM 12288MiB (3060) / 16384MiB (4060 Ti)
+```
+
+### C.3 部署 Qwen2.5-Omni-7B 量化模型
+
+```bash
+# 1. 下载原始模型
+pip install modelscope
+modelscope download --model Qwen/Qwen2.5-Omni-7B \
+    --local_dir ~/models/Qwen2.5-Omni-7B
+
+# 2. 编译 llama.cpp
+git clone https://github.com/ggerganov/llama.cpp
+cd llama.cpp
+cmake -B build -DGGML_CUDA=ON
+cmake --build build -j$(nproc)
+
+# 3. 转换 HF → GGUF FP16
+python3 convert_hf_to_gguf.py ~/models/Qwen2.5-Omni-7B \
+    --outtype f16 --outfile ~/models/Qwen2.5-Omni-7B-FP16.gguf
+
+# 4. 量化 FP16 → Q4_K_M
+./build/bin/llama-quantize \
+    ~/models/Qwen2.5-Omni-7B-FP16.gguf \
+    ~/models/Qwen2.5-Omni-7B-Q4_K_M.gguf \
+    Q4_K_M
+
+# 验证：~6.2 GB
+ls -lh ~/models/Qwen2.5-Omni-7B-Q4_K_M.gguf
+```
+
+### C.4 启动推理服务
+
+```bash
+./build/bin/llama-server \
+    -m ~/models/Qwen2.5-Omni-7B-Q4_K_M.gguf \
+    --mmproj ~/models/qwen2.5-omni-vision.gguf \
+    --host 0.0.0.0 --port 8100 \
+    -ngl 99 \
+    -c 4096 \
+    --mlock &
+
+# 验证
+curl http://localhost:8100/health
+
+# 查看 VRAM
+nvidia-smi
+# 预期: ~8.5-9.0 GB VRAM used (模型 8.2GB + overhead)
+# 剩余 ~3 GB，可同时跑 Kokoro TTS 或 Live2D 渲染
+```
+
+### C.5 配置与安装
+
+```bash
+# .env — 纯本地模式
+cat > .env << 'EOF'
+OMNI_LOCAL_URL=http://localhost:8100
+DASHSCOPE_API_KEY=
+CAMERA_TUTOR_DATA_DIR=~/.camera-tutor-data
+EOF
+
+# Python 依赖
+python3 -m venv ~/camera-tutor-env
+source ~/camera-tutor-env/bin/activate
+pip install -r requirements.txt
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+```
+
+### C.6 验证运行
+
+```bash
+python3 camera_tutor/demo.py --mock     # 逻辑验证
+python3 camera_tutor/scenario_demos.py  # 场景验证（预期 6/6）
+python3 camera_tutor/demo.py            # 完整 Demo
+```
+
+### C.7 桌面 GPU vs Jetson Orin
+
+| 维度 | RTX 3060 12GB | Jetson AGX Orin 64GB |
+|------|:--:|:--:|
+| **部署时间** | ~30 分钟 | 2-4 小时 |
+| **推理速度** | ⭐⭐⭐ 更快 | ⭐⭐ 低功耗 ARM |
+| **功耗** | 170W | 15-60W |
+| **VRAM** | 12GB（必须量化） | 64GB（可跑 FP16） |
+| **噪音/体积** | 风扇 + 大机箱 | 几乎无声 + 巴掌大 |
+| **适合** | **开发迭代首选** | **量产部署目标** |
+
+> **建议**：开发阶段用 RTX 3060 快速迭代，确认效果后移植 Jetson Orin。两套环境共用 `omni_client.py`（改 `OMNI_LOCAL_URL` 即可切换）。
+
+### C.8 一键启动脚本
+
+```bash
+#!/bin/bash
+# start-camera-tutor-desktop.sh
+
+set -e
+LLAMA_CPP_DIR="$HOME/llama.cpp"
+MODEL="$HOME/models/Qwen2.5-Omni-7B-Q4_K_M.gguf"
+MMPROJ="$HOME/models/qwen2.5-omni-vision.gguf"
+
+echo "🔍 检查 GPU..."
+nvidia-smi | head -n 1 || { echo "❌ 未检测到 NVIDIA GPU"; exit 1; }
+
+echo "🚀 启动 llama.cpp server..."
+cd "$LLAMA_CPP_DIR"
+./build/bin/llama-server -m "$MODEL" --mmproj "$MMPROJ" \
+    --host 0.0.0.0 --port 8100 -ngl 99 -c 4096 --mlock &
+SERVER_PID=$!
+
+echo "⏳ 等待模型加载..."
+for i in $(seq 1 30); do
+    curl -s http://localhost:8100/health > /dev/null 2>&1 && break
+    sleep 2
+done
+echo "✅ 推理服务就绪"
+
+echo "🎤 启动 Camera Tutor..."
+source ~/camera-tutor-env/bin/activate
+cd ~/workspace/english-tutor
+python3 camera_tutor/demo.py
+
+kill $SERVER_PID 2>/dev/null
+echo "👋 已关闭"
+```
+
+```bash
+chmod +x start-camera-tutor-desktop.sh
+./start-camera-tutor-desktop.sh
+```

@@ -39,6 +39,11 @@ from camera_tutor.tutor_personas import get_active_tutor
 from camera_tutor.camera import CameraPipeline
 from camera_tutor.avatar import Viseme
 from camera_tutor.vision_manager import VisionManager
+from camera_tutor.parent_report import ParentReportEngine
+
+# Shared memory & SR (reuse english_tutor modules)
+from english_tutor.memory import ConversationMemory
+from english_tutor.spaced_repetition import SpacedRepetition
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +148,19 @@ class CameraTutorAgent:
         # Dashboard thread
         self._dashboard_thread: Optional[threading.Thread] = None
 
+        # Memory & learning tracking
+        self.memory: Optional[ConversationMemory] = None
+        self.sr: Optional[SpacedRepetition] = None
+        self.reporter: Optional[ParentReportEngine] = None
+        self._storage_dir: Path = Path(
+            __file__).resolve().parent.parent / ".camera-tutor-data"
+
+        # Track recent utterances for context
+        self._last_child_utterance: str = ""
+        self._last_emma_utterance: str = ""
+        self._utterances_this_session: int = 0
+        self._recent_emma_phrases: list[str] = []
+
         # Signal handling
         self._signal_setup_done = False
 
@@ -163,6 +181,16 @@ class CameraTutorAgent:
 
         # Face sync (dashboard connection)
         self.face_sync = FaceSyncManager()
+
+        # Memory & learning systems
+        self.memory = ConversationMemory(storage_dir=self._storage_dir, user_id="camera_tutor")
+        self.memory.new_session()
+        logger.info("Conversation memory: %s", self.memory._data_dir)
+
+        self.sr = SpacedRepetition(storage_dir=self._storage_dir, user_id="camera_tutor")
+        logger.info("Spaced repetition: %s", self.sr._path)
+
+        self.reporter = ParentReportEngine(storage_dir=self._storage_dir)
 
         # Register signal handler
         if not self._signal_setup_done:
@@ -272,6 +300,13 @@ class CameraTutorAgent:
         if self.camera:
             self.camera.stop()
 
+        # Save memory state
+        if self.memory:
+            try:
+                self.memory._save_stats()
+            except Exception:
+                pass
+
         logger.info("Camera Tutor Agent stopped")
 
     # ── WebSocket event handlers ─────────────────────────────────
@@ -287,7 +322,7 @@ class CameraTutorAgent:
             "session": {
                 "modalities": ["text", "audio"],
                 "voice": "Tina",
-                "instructions": self.tutor.system_prompt_guidance(),
+                "instructions": self._build_instructions(),
                 "input_audio_format": "pcm",
                 "output_audio_format": "pcm",
                 "input_audio_transcription": {
@@ -362,15 +397,36 @@ class CameraTutorAgent:
             if transcript:
                 logger.info("🤖 %s: %s", self.tutor.name, transcript)
                 self.state.set_transcript(transcript)
+                self._last_emma_utterance = transcript
+                self._utterances_this_session += 1
+                self._recent_emma_phrases.append(transcript)
+                if len(self._recent_emma_phrases) > 10:
+                    self._recent_emma_phrases.pop(0)
+                # Log to memory
+                if self.memory:
+                    self.memory.save_message("assistant", transcript)
+                if self.reporter:
+                    self.reporter.log_event("emma_spoke", {"text": transcript[:200]})
 
         elif event_type == "response.audio.done":
             self.face_sync.reset_viseme()
             self.state.set_transcript("")
+            # Extract vocabulary from the completed utterance
+            if self._last_emma_utterance:
+                self._check_vocabulary(self._last_emma_utterance, is_emma=True)
 
         elif event_type == "conversation.item.input_audio_transcription.completed":
             transcript = event.get("transcript", "")
             if transcript:
                 logger.info("👧 Child: %s", transcript)
+                self._last_child_utterance = transcript
+                # Log to memory
+                if self.memory:
+                    self.memory.save_message("user", transcript)
+                if self.reporter:
+                    self.reporter.log_event("child_spoke_english", {"text": transcript[:200]})
+                # Extract vocabulary & errors
+                self._check_vocabulary(transcript, is_emma=False)
 
         elif event_type == "error":
             err = event.get("error", {})
@@ -470,6 +526,161 @@ class CameraTutorAgent:
             time.sleep(0.2)
 
         logger.warning("Dashboard start timeout — continuing without dashboard")
+
+    # ── Rich instruction builder ──────────────────────────────────
+
+    def _build_instructions(self) -> str:
+        """Build a rich system prompt with child profile and vocabulary."""
+        child_age = self._get_child_age()
+        max_words = {3: 5, 5: 8, 7: 10, 9: 12, 12: 15}
+        closest = min(max_words.keys(), key=lambda k: abs(k - child_age))
+        w = max_words[closest]
+
+        known_vocab = self._get_known_vocab()
+        common_errors = self._get_common_errors()
+        due_words = self._get_due_words()
+        session_info = self._get_session_info()
+
+        vocab_line = ""
+        if known_vocab:
+            vocab_line = (
+                f"\nCHILD'S KNOWN VOCABULARY ({len(known_vocab)} words):\n"
+                f"{', '.join(known_vocab)}\n"
+            )
+        errors_line = ""
+        if common_errors:
+            errors_line = f"\nCHILD'S COMMON ERRORS:\n{common_errors}\n"
+        due_line = ""
+        if due_words:
+            due_line = (
+                f"\nWORDS TO PRACTICE TODAY:\n"
+                f"Try to naturally use these words: {', '.join(due_words)}\n"
+            )
+
+        # Recent phrases Emma used (avoid repetition)
+        recent_phrases = self._recent_emma_phrases[-4:]
+        recent_line = ""
+        if recent_phrases:
+            recent_line = (
+                f"\nYOUR RECENT RESPONSES (do NOT repeat these):\n"
+            )
+            for i, p in enumerate(recent_phrases, 1):
+                recent_line += f"  {i}. \"{p[:60]}...\"\n"
+            recent_line += (
+                f"\nUse completely different words and sentence structures.\n"
+            )
+
+        return (
+            f"You are {self.tutor.name}, a {self.tutor.teaching_style} English tutor "
+            f"for a {child_age}-year-old child.\n"
+            f"Personality: {', '.join(self.tutor.personality_traits[:3])}.\n"
+            f"Appearance: a {self.tutor.age_appearance}-year-old woman.\n\n"
+            f"{self.tutor._tutor_rules()}\n\n"
+            f"IMPORTANT: The child speaks ENGLISH. Transcribe as English.\n\n"
+            f"VISION: You receive real-time camera images — use what you SEE.\n\n"
+            f"{session_info}{vocab_line}{errors_line}{due_line}{recent_line}"
+            f"CRITICAL RULES:\n"
+            f"1. MAXIMUM {w} words per sentence. ONE sentence only.\n"
+            f"2. Use only simple words a {child_age}-year-old can understand.\n"
+            f"3. NEVER repeat the same sentence structure you used recently.\n"
+            f"4. Praise every attempt to speak English.\n"
+            f"5. If you SEE something interesting in the camera, mention it.\n"
+            f"6. This is turn #{self._utterances_this_session + 1} in this conversation.\n"
+            f"7. If the child struggles, model the correct form patiently.\n"
+            f"8. Use at least one word from the child's known vocabulary.\n"
+        )
+
+    def _get_child_age(self) -> int:
+        from camera_tutor.tutor_personas import get_child_age as _get_age
+        return _get_age()
+
+    def _get_known_vocab(self) -> list[str]:
+        if not self.memory:
+            return []
+        vocab = self.memory.get_vocabulary()
+        return [v["word"] for v in vocab[-20:]] if vocab else []
+
+    def _get_common_errors(self) -> str:
+        if not self.memory:
+            return ""
+        errors = self.memory.stats.get("common_errors", {})
+        if not errors:
+            return ""
+        parts = []
+        for err_type, info in errors.items():
+            ex = info.get("examples", [])
+            ex_str = f' (e.g. "{ex[-1]}")' if ex else ""
+            parts.append(f"- {err_type}: {info['count']}x{ex_str}")
+        return "\n".join(parts)
+
+    def _get_due_words(self) -> list[str]:
+        if not self.sr:
+            return []
+        try:
+            return [c.word for c in self.sr.get_due_cards(limit=5)]
+        except Exception:
+            return []
+
+    def _get_session_info(self) -> str:
+        if not self.memory:
+            return ""
+        s = self.memory.stats
+        sr_total = len(self.sr.cards) if self.sr else 0
+        return (
+            f"LEARNER PROFILE:\n"
+            f"- Session #{max(s.get('total_sessions', 0), 1)} for this child\n"
+            f"- Messages so far: ~{max(s.get('total_messages', 0), 1)}\n"
+            f"- Vocabulary tracked: {len(s.get('vocabulary', []))} words\n"
+            f"- Spaced repetition cards: {sr_total} cards\n\n"
+        )
+
+    def _check_vocabulary(self, text: str, is_emma: bool) -> None:
+        if not text.strip():
+            return
+        words = text.strip().strip(".,!?").split()
+        if len(words) < 2:
+            return
+        if is_emma:
+            self._extract_new_words(text)
+        else:
+            self._check_child_errors(text)
+
+    def _extract_new_words(self, text: str) -> None:
+        import re
+        for _, word in re.findall(
+            r"\b(this is|that is|it's a|it's an|here is|there is|"
+            r"see the|look at the|that's a|that's an)\s+(\w+)",
+            text, re.IGNORECASE,
+        ):
+            word = word.strip(".,!?'\"")
+            if len(word) > 2 and word[0].isalpha() and self.sr and self.memory:
+                self.sr.add_card(word, "", text[:100])
+                self.memory.add_new_word(word, "", text[:100])
+                logger.info("📝 New word tracked: %s", word)
+        for (word,) in re.findall(
+            r"\b(\w{3,})\b.*(?:word|say|repeat|sound|letter)", text, re.IGNORECASE,
+        ):
+            word = word.strip(".,!?'\"")
+            if len(word) > 2 and word[0].isalpha() and self.sr and self.memory:
+                self.sr.add_card(word, "", text[:100])
+                self.memory.add_new_word(word, "", text[:100])
+                logger.info("📝 New word tracked (emphatic): %s", word)
+
+    def _check_child_errors(self, text: str) -> None:
+        import re
+        text_lower = text.lower().strip()
+        for pattern, error_type in [
+            (r"\bhe go\b|\bshe go\b|\bhe run\b|\bshe run\b|\bhe want\b|\bshe want\b",
+             "subject-verb agreement (3rd person)"),
+            (r"\ba apple\b|\ban cat\b|\ba elephant\b", "article (a/an confusion)"),
+            (r"\bgoed\b|\brunned\b|\bswimmed\b|\bcatched\b", "irregular past tense"),
+            (r"\bdon't have no\b|\bcan't find no\b", "double negative"),
+            (r"\bhim go\b|\bher go\b|\bthem go\b", "pronoun (subject vs object)"),
+            (r"\btwo book\b|\bthree dog\b|\bten cat\b", "plural -s missing"),
+        ]:
+            if re.search(pattern, text_lower) and self.memory:
+                self.memory.record_error(error_type, text[:100])
+                logger.info("📝 Error tracked: %s — \"%s\"", error_type, text[:60])
 
     # ── Helpers ──────────────────────────────────────────────────
 

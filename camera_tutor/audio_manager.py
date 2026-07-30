@@ -5,12 +5,14 @@ because macOS CoreAudio + blocking RawStream causes dropouts.
 
 Mic:     InputStream callback → ring buffer → read_mic()
 Speaker: write_spk() → ring buffer → OutputStream callback
+Visemes: paired with audio in ring buffer → pushed at play time
 
 Usage:
     mgr = AudioManager()
+    mgr.set_viseme_handler(my_handler)   # optional: for lip-sync
     mgr.start()
-    data = mgr.read_mic()       # bytes, ~0.2s @ 16kHz
-    mgr.write_spk(data)         # bytes, 24kHz PCM (non-blocking!)
+    data = mgr.read_mic()                # bytes, ~0.2s @ 16kHz
+    mgr.write_spk(data, visemes=[...])   # bytes + viseme payloads
     mgr.stop()
 """
 
@@ -20,7 +22,7 @@ import logging
 import threading
 import time
 from collections import deque
-from typing import Optional
+from typing import Optional, Callable
 
 import sounddevice as sd
 import numpy as np
@@ -32,11 +34,9 @@ logger = logging.getLogger(__name__)
 RATE_MIC = 16000    # Mic sample rate (server expects 16kHz PCM)
 RATE_SPK = 24000    # Speaker sample rate (server outputs 24kHz PCM)
 
-# Mic: callback every 50ms
 MIC_CALLBACK_FRAMES = 800    # 50ms @ 16kHz
-MIC_READ_FRAMES = 3200       # 200ms — how much read_mic() returns per call
+MIC_READ_FRAMES = 3200       # 200ms per read_mic() call
 
-# Speaker: callback every 50ms
 SPK_CALLBACK_FRAMES = 1200   # 50ms @ 24kHz
 
 DEFAULT_MIC_GAIN = 1.0
@@ -48,8 +48,10 @@ DEFAULT_MIC_GAIN = 1.0
 class AudioManager:
     """Manages microphone input and speaker output streams.
 
-    Both directions use callback-based streams to avoid
-    macOS CoreAudio blocking-read buffer overflow issues.
+    Both directions use callback-based streams. Viseme payloads
+    can be paired with audio chunks for lip-sync — they are
+    held until the corresponding audio actually plays, then
+    pushed via the registered viseme_handler.
     """
 
     def __init__(
@@ -65,18 +67,79 @@ class AudioManager:
 
         # Mic: callback → ring → read_mic()
         self._mic_ring: deque[bytes] = deque()
-        self._mic_ring_maxlen = 100  # 100 × 50ms = 5s
+        self._mic_ring_maxlen = 100
         self._mic_lock = threading.Lock()
         self._mic_ring_overflow = 0
 
         # Speaker: write_spk() → ring → callback
-        self._spk_ring: deque[bytes] = deque()
-        self._spk_ring_maxlen = 200  # 200 × 50ms = 10s
+        # Each entry: (audio_bytes, viseme_payloads_or_None)
+        self._spk_ring: deque[tuple[bytes, list[dict] | None]] = deque()
+        self._spk_ring_maxlen = 200
         self._spk_lock = threading.Lock()
         self._spk_ring_underflow = 0
 
+        # Viseme outbox: callback pushes here; drain thread sends
+        self._viseme_outbox: deque[dict] = deque()
+        self._viseme_outbox_lock = threading.Lock()
+        self._viseme_handler: Callable[[dict], None] | None = None
+        self._viseme_drain_thread: threading.Thread | None = None
+        self._viseme_drain_stop = threading.Event()
+
         # Level tracking
         self._level_samples: list[float] = []
+
+    # ── Viseme handler (for lip-sync) ────────────────────────────
+
+    def set_viseme_handler(self, handler: Callable[[dict], None]) -> None:
+        """Register a callback for viseme payloads.
+
+        Called from the viseme drain thread (NOT the audio callback)
+        whenever a queued viseme is due for display.
+
+        Args:
+            handler: fn(dict) — typically FaceSyncManager.push_payload
+        """
+        self._viseme_handler = handler
+
+    def _start_viseme_drain(self) -> None:
+        """Background thread that drains the viseme outbox."""
+        if self._viseme_drain_thread is not None:
+            return
+        self._viseme_drain_stop.clear()
+        self._viseme_drain_thread = threading.Thread(
+            target=self._viseme_drain_loop,
+            name="viseme-drain",
+            daemon=True,
+        )
+        self._viseme_drain_thread.start()
+
+    def _stop_viseme_drain(self) -> None:
+        self._viseme_drain_stop.set()
+        if self._viseme_drain_thread:
+            self._viseme_drain_thread.join(timeout=1.0)
+            self._viseme_drain_thread = None
+
+    def _viseme_drain_loop(self) -> None:
+        """Continuously drain viseme outbox, ~50Hz."""
+        while not self._viseme_drain_stop.is_set():
+            handler = self._viseme_handler
+            if handler is None:
+                time.sleep(0.1)
+                continue
+
+            # Drain all pending visemes
+            payloads: list[dict] = []
+            with self._viseme_outbox_lock:
+                while self._viseme_outbox:
+                    payloads.append(self._viseme_outbox.popleft())
+
+            for p in payloads:
+                try:
+                    handler(p)
+                except Exception:
+                    pass
+
+            time.sleep(0.02)  # 50Hz
 
     # ── Lifecycle ───────────────────────────────────────────────
 
@@ -96,40 +159,34 @@ class AudioManager:
             logger.info("Mic gain: %.1fx (%.1f dB)", self._mic_gain,
                         20 * np.log10(max(self._mic_gain, 1e-6)))
 
-        # Clear rings
         self._mic_ring.clear()
         self._mic_ring_overflow = 0
         self._spk_ring.clear()
         self._spk_ring_underflow = 0
+        self._viseme_outbox.clear()
 
-        # Input: callback-based InputStream
         self._mic_stream = sd.InputStream(
-            samplerate=RATE_MIC,
-            channels=1,
-            dtype="int16",
-            blocksize=MIC_CALLBACK_FRAMES,
-            device=self._mic_index,
+            samplerate=RATE_MIC, channels=1, dtype="int16",
+            blocksize=MIC_CALLBACK_FRAMES, device=self._mic_index,
             callback=self._mic_callback,
         )
-        # Output: callback-based OutputStream
         self._spk_stream = sd.OutputStream(
-            samplerate=RATE_SPK,
-            channels=1,
-            dtype="int16",
+            samplerate=RATE_SPK, channels=1, dtype="int16",
             blocksize=SPK_CALLBACK_FRAMES,
             callback=self._spk_callback,
         )
         self._mic_stream.start()
         self._spk_stream.start()
+
+        self._start_viseme_drain()
         self._started = True
-        logger.info("Audio ready (mic=%dHz cb=%d, spk=%dHz cb=%d)",
-                    RATE_MIC, MIC_CALLBACK_FRAMES,
-                    RATE_SPK, SPK_CALLBACK_FRAMES)
+        logger.info("Audio ready (mic=%dHz, spk=%dHz)", RATE_MIC, RATE_SPK)
 
     def stop(self) -> None:
         if not self._started:
             return
         self._started = False
+        self._stop_viseme_drain()
         for stream, name in [(self._mic_stream, "Mic"), (self._spk_stream, "Speaker")]:
             if stream:
                 try:
@@ -144,7 +201,6 @@ class AudioManager:
 
     def _mic_callback(self, indata: np.ndarray, frames: int,
                       time_info, status) -> None:
-        """Push mic audio into ring buffer."""
         raw = indata.tobytes()
         with self._mic_lock:
             if len(self._mic_ring) >= self._mic_ring_maxlen:
@@ -156,29 +212,31 @@ class AudioManager:
 
     def _spk_callback(self, outdata: np.ndarray, frames: int,
                       time_info, status) -> None:
-        """Pull audio from spk ring buffer, fill outdata. Silence if empty."""
-        needed = frames * 2  # int16 = 2 bytes per sample
+        """Pull audio from spk ring, fill outdata. Queue visemes."""
+        needed = frames * 2  # int16 = 2 bytes/sample
+        viseme_batch: list[dict] = []
+
         with self._spk_lock:
             if self._spk_ring:
-                # Concatenate available chunks
-                parts: list[bytes] = []
+                # Gather audio + visemes until we have enough
+                audio_parts: list[bytes] = []
                 total = 0
                 while self._spk_ring and total < needed:
-                    chunk = self._spk_ring.popleft()
-                    parts.append(chunk)
-                    total += len(chunk)
+                    chunk_bytes, visemes = self._spk_ring.popleft()
+                    audio_parts.append(chunk_bytes)
+                    total += len(chunk_bytes)
+                    if visemes:
+                        viseme_batch.extend(visemes)
 
-                buf = b"".join(parts)
+                buf = b"".join(audio_parts)
 
                 if len(buf) >= needed:
-                    # We have enough — use exactly needed bytes
                     outdata[:] = np.frombuffer(buf[:needed], dtype=np.int16).reshape((frames, 1))
-                    # Push leftover back to front of ring
                     leftover = buf[needed:]
                     if leftover:
-                        self._spk_ring.appendleft(leftover)
+                        # Push leftover back — visemes already consumed
+                        self._spk_ring.appendleft((leftover, None))
                 else:
-                    # Not enough — pad with silence
                     outdata.fill(0)
                     out_flat = outdata.ravel()
                     arr = np.frombuffer(buf, dtype=np.int16)
@@ -188,10 +246,14 @@ class AudioManager:
                 outdata.fill(0)
                 self._spk_ring_underflow += 1
 
+        # Push visemes to outbox (outside lock, safe for PortAudio thread)
+        if viseme_batch and self._viseme_handler is not None:
+            with self._viseme_outbox_lock:
+                self._viseme_outbox.extend(viseme_batch)
+
     # ── Mic I/O ──────────────────────────────────────────────────
 
     def read_mic(self) -> Optional[bytes]:
-        """Read ~200ms of audio from the mic ring buffer."""
         if not self._started or self._mic_stream is None:
             return None
         try:
@@ -206,7 +268,6 @@ class AudioManager:
                 return None
 
             raw_bytes = b"".join(parts)
-
             if self._mic_gain != 1.0:
                 arr = np.frombuffer(raw_bytes, dtype=np.int16).astype(np.float32)
                 arr *= self._mic_gain
@@ -217,12 +278,10 @@ class AudioManager:
                 arr = np.frombuffer(raw_bytes, dtype=np.int16).astype(np.float32)
 
             self._track_level(arr)
-
             if self._mic_ring_overflow > 0:
                 count = self._mic_ring_overflow
                 self._mic_ring_overflow = 0
-                logger.warning("Mic ring overflow x%d — main loop too slow?", count)
-
+                logger.warning("Mic ring overflow x%d", count)
             return boosted
         except Exception as e:
             logger.warning("Mic read error: %s", e)
@@ -237,20 +296,22 @@ class AudioManager:
 
     # ── Speaker I/O ──────────────────────────────────────────────
 
-    def write_spk(self, data: bytes) -> None:
-        """Push audio data to speaker ring buffer. Non-blocking.
+    def write_spk(self, data: bytes, visemes: list[dict] | None = None) -> None:
+        """Push audio + optional viseme payloads to speaker ring. Non-blocking.
+
+        Visemes are held until the corresponding audio chunk actually
+        plays, then pushed via the registered viseme_handler.
 
         Args:
-            data: 16-bit PCM bytes @ 24kHz (from Qwen-Omni server).
+            data: 16-bit PCM bytes @ 24kHz.
+            visemes: Pre-computed viseme payload dicts (from FaceSync).
         """
         if not self._started or self._spk_stream is None:
             return
         with self._spk_lock:
             if len(self._spk_ring) >= self._spk_ring_maxlen:
-                # Ring full — drop oldest. This means playback is falling behind.
-                logger.debug("Spk ring full — dropping oldest chunk")
                 self._spk_ring.popleft()
-            self._spk_ring.append(data)
+            self._spk_ring.append((data, visemes))
 
     # ── Properties ───────────────────────────────────────────────
 
@@ -282,7 +343,6 @@ class AudioManager:
 
     @property
     def spk_buffer_fill(self) -> int:
-        """How many callback chunks are queued for playback (debug)."""
         return len(self._spk_ring)
 
     @property

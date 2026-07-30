@@ -198,6 +198,9 @@ class CameraTutorAgent:
         # Face sync (dashboard connection)
         self.face_sync = FaceSyncManager()
 
+        # Wire viseme handler: AudioManager will call this when audio plays
+        self.audio.set_viseme_handler(self._on_viseme_play)
+
         # Memory & learning systems
         self.memory = ConversationMemory(storage_dir=self._storage_dir, user_id="camera_tutor")
         self.memory.new_session()
@@ -424,8 +427,8 @@ class CameraTutorAgent:
         # ── Audio playback + viseme sync ──
         elif event_type == "response.audio.delta":
             chunk = base64.b64decode(event["delta"])
-            self.audio.write_spk(chunk)
-            self._process_viseme_chunk(chunk)
+            viseme_payloads = self._extract_viseme_payloads(chunk)
+            self.audio.write_spk(chunk, visemes=viseme_payloads)
             # Calibration: save audio to file if env var is set
             if os.environ.get("SAVE_CALIBRATION_AUDIO"):
                 if not hasattr(self, "_calib_chunks"):
@@ -545,17 +548,35 @@ class CameraTutorAgent:
                 else:
                     logger.debug("Mic level: RMS=%.1f, %.1f dBFS", rms, dbfs)
 
-    def _process_viseme_chunk(self, chunk: bytes) -> None:
-        """Extract visemes from an audio chunk and push to face sync.
-
-        Uses spectral analysis for zero-latency viseme extraction.
+    def _extract_viseme_payloads(self, chunk: bytes) -> list[dict] | None:
+        """Extract viseme payloads from an audio chunk.
+        
+        Returns pre-computed payload dicts. They are queued alongside
+        the audio in AudioManager and pushed to FaceSync at play time.
         """
         try:
             from camera_tutor.spectral_viseme import chunk_to_visemes
+            from camera_tutor.live2d_bridge import VisemeParams
+            transcript = self.state.get_transcript()
+            payloads = []
             for v in chunk_to_visemes(chunk, 24000):
-                self.face_sync.push_viseme(v, self.state.get_transcript())
+                params = VisemeParams.from_viseme(v)
+                payloads.append({
+                    "viseme": v.label,
+                    "mouth_open": params.mouth_open,
+                    "mouth_width": params.mouth_width,
+                    "tongue_visible": params.tongue_visible,
+                    "transcript": transcript,
+                })
+            return payloads if payloads else None
         except Exception as e:
-            logger.debug("Viseme processing error: %s", e)
+            logger.debug("Viseme extraction error: %s", e)
+            return None
+
+    def _on_viseme_play(self, payload: dict) -> None:
+        """Called by AudioManager's drain thread when a viseme is due."""
+        if self.face_sync:
+            self.face_sync.push_payload(payload)
 
     # ── Dashboard lifecycle ──────────────────────────────────────
 

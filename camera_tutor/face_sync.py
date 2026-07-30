@@ -124,6 +124,14 @@ class FaceSyncManager:
         except Exception as e:
             logger.warning("Viseme push error: %s", e)
 
+    def push_payload(self, payload: dict) -> None:
+        """Push a pre-built payload dict (no dedup). For AudioManager lip-sync."""
+        payload.setdefault("type", "viseme")
+        try:
+            self._send_payload(payload)
+        except Exception as e:
+            logger.warning("Viseme payload error: %s", e)
+
     def reset_viseme(self) -> None:
         """Reset to silence/rest state."""
         self._last_viseme_label = None

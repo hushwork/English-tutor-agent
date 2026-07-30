@@ -172,6 +172,7 @@ class CameraTutorAgent:
         self._last_emma_utterance: str = ""
         self._utterances_this_session: int = 0
         self._recent_emma_phrases: list[str] = []
+        self._last_speech_time: float = 0.0
 
         # Signal handling
         self._signal_setup_done = False
@@ -418,6 +419,7 @@ class CameraTutorAgent:
 
         elif event_type == "input_audio_buffer.speech_started":
             self.state.audio_started.set()
+            self._last_speech_time = time.time()
 
         # ── Audio playback + viseme sync ──
         elif event_type == "response.audio.delta":
@@ -522,24 +524,26 @@ class CameraTutorAgent:
                 logger.warning("Mic send error: %s", e)
                 break
 
-            # Periodic mic level monitoring — helps diagnose "LLM can't hear me"
+            # Periodic mic level monitoring — only warn if persistently dead
             now = time.time()
             if now >= level_check_at:
-                level_check_at = now + 10.0  # Every 10s
+                level_check_at = now + 30.0  # Every 30s — less noisy
                 rms = self.audio.mic_level_rms
                 dbfs = self.audio.mic_level_dbfs
-                if rms < 10:
+                # Only warn if the mic has been near-silent for 30s AND
+                # server VAD hasn't triggered recently (no one is talking).
+                # Silence during conversation pauses is normal.
+                if rms < 5 and self._seconds_since_last_speech() > 30:
                     logger.warning(
-                        "⚠️  Mic level VERY LOW (RMS=%.1f, %.1f dBFS). "
-                        "Server VAD may not trigger. "
-                        "Check: System Preferences > Sound > Input volume, "
+                        "⚠️  Mic level VERY LOW for 30s+ (RMS=%.1f, %.1f dBFS). "
+                        "Check mic connection, System Preferences > Sound > Input volume, "
                         "or increase mic_gain (currently %.1fx).",
                         rms, dbfs, self.audio.mic_gain,
                     )
-                elif rms < 50:
-                    logger.info("Mic level: RMS=%.1f, %.1f dBFS (moderate — ok)", rms, dbfs)
+                elif rms < 15:
+                    logger.debug("Mic level: RMS=%.1f, %.1f dBFS (quiet — normal when silent)", rms, dbfs)
                 else:
-                    logger.debug("Mic level: RMS=%.1f, %.1f dBFS (good)", rms, dbfs)
+                    logger.debug("Mic level: RMS=%.1f, %.1f dBFS", rms, dbfs)
 
     def _process_viseme_chunk(self, chunk: bytes) -> None:
         """Extract visemes from an audio chunk and push to face sync.
@@ -857,6 +861,11 @@ class CameraTutorAgent:
             print(f"   🔗 http://localhost:{self.config.dashboard_port}/static/face_preview.html")
         except Exception:
             pass
+
+    def _seconds_since_last_speech(self) -> float:
+        if self._last_speech_time == 0.0:
+            return float("inf")
+        return time.time() - self._last_speech_time
 
     def _handle_sigint(self, sig, frame) -> None:
         """Handle Ctrl+C — initiate graceful shutdown."""

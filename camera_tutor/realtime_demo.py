@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from camera_tutor.tutor_personas import get_active_tutor
 from camera_tutor.camera import CameraPipeline
 from camera_tutor.avatar import EmmaAvatar, Viseme
+from camera_tutor.phoneme_dict import word_to_viseme_timeline
 from _thread import interrupt_main
 
 # ── Audio setup ──────────────────────────────────────────────────
@@ -219,16 +220,22 @@ def _get_whisper():
         print("   ✅ Whisper ready", flush=True)
         return _whisper_model
 
-def _push_face_viseme(word: str, full_transcript: str):
+def _push_face_viseme(word_or_viseme, full_transcript: str):
+    """Push viseme params to dashboard. Accepts word string or Viseme object."""
     try:
-        if not word or not word.strip():
-            mouth_open, tongue_visible, mouth_width, viseme_label = 0.05, 0.0, 0.3, "sil"
+        from camera_tutor.live2d_bridge import VisemeParams
+        
+        if isinstance(word_or_viseme, Viseme):
+            viseme = word_or_viseme
+        elif not word_or_viseme or not str(word_or_viseme).strip():
+            viseme = Viseme.V00_SIL
         else:
-            viseme = emma_avatar._word_to_viseme(word)
-            from camera_tutor.live2d_bridge import VisemeParams
-            p = VisemeParams.from_viseme(viseme)
-            mouth_open, tongue_visible, mouth_width, viseme_label = \
-                p.mouth_open, p.tongue_visible, p.mouth_width, viseme.label
+            viseme = emma_avatar._word_to_viseme(str(word_or_viseme))
+        
+        p = VisemeParams.from_viseme(viseme)
+        mouth_open, tongue_visible, mouth_width, viseme_label = \
+            p.mouth_open, p.tongue_visible, p.mouth_width, viseme.label
+        
         import httpx
         httpx.post("http://localhost:8200/api/emma/face", json={
             "viseme": viseme_label, "mouth_open": mouth_open,
@@ -304,39 +311,48 @@ def _flush_whisper_sync():
     _face_seq_id += 1
     fseq = _face_seq_id
 
-    # Schedule face pushes at whisper timestamps
+    # Build phoneme-level viseme timeline from word timestamps
+    viseme_timeline = []
     for w, start_s, end_s in word_times:
         if not w:
             continue
-        delay = start_s
-        def _push_at_time(word=w, d=delay, s=fseq):
-            if s != _face_seq_id or seq != _buffer_seq_id:
-                return
-            if d > 0:
-                t = threading.Timer(d, lambda: _push_face_viseme(word, transcript))
-                t.daemon = True
-                t.start()
-            else:
-                _push_face_viseme(word, transcript)
-        _push_at_time()
+        viseme_timeline.extend(word_to_viseme_timeline(w, start_s, end_s))
 
-    # Schedule reset at end
-    last_end = word_times[-1][2] if word_times else 0
-    def _reset_later():
-        if fseq == _face_seq_id:
-            _push_face_viseme("", transcript)
-    _face_timer = threading.Timer(last_end + 0.3, _reset_later)
-    _face_timer.daemon = True
-    _face_timer.start()
-
-    # Play audio in background
-    def _play():
+    # Play audio + drive viseme by clock (synchronized)
+    def _play_with_viseme():
         import time as _t
-        for chunk in audio_chunks:
+        start_clock = _t.time()
+        v_idx = 0
+        total_chunks = len(audio_chunks)
+
+        for ci, chunk in enumerate(audio_chunks):
             if seq != _buffer_seq_id:
                 break
+
+            # Write audio
             spk.write(chunk)
-    threading.Thread(target=_play, daemon=True).start()
+
+            # Calculate elapsed time (approximate from chunk progress)
+            # 24kHz 16bit mono → 48000 bytes/sec
+            chunk_duration = len(chunk) / 48000.0
+            elapsed = (ci + 1) * chunk_duration
+
+            # Push visemes whose scheduled time <= elapsed
+            while v_idx < len(viseme_timeline) and viseme_timeline[v_idx][0] <= elapsed:
+                v = viseme_timeline[v_idx][1]
+                _push_face_viseme(v, transcript)
+                v_idx += 1
+
+        # Push any remaining visemes
+        while v_idx < len(viseme_timeline):
+            _push_face_viseme(viseme_timeline[v_idx][1], transcript)
+            v_idx += 1
+
+        # Reset face after playback
+        if seq == _buffer_seq_id:
+            _push_face_viseme(Viseme.V00_SIL, transcript)
+
+    threading.Thread(target=_play_with_viseme, daemon=True).start()
 
 
 def on_message(ws, message):

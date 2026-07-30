@@ -106,18 +106,25 @@ print()
 # ── WebSocket callbacks ─────────────────────────────────────────
 
 tutor = get_active_tutor()
-emma_avatar = EmmaAvatar()   # instance — drives face viseme lookup
-_ws = None
-_running = True
-_last_audio_time = [0.0]  # for response.create fallback
-_audio_started = threading.Event()
-_session_ready = threading.Event()
-_browser_opened = False  # only open browser on first connect
-_camera_started = False  # ensure camera threads started only once
+emma_avatar = EmmaAvatar()
+
+from types import SimpleNamespace as _NS
+state = _NS(
+    ws=None,
+    running=True,
+    last_audio_time=[0.0],
+    audio_started=threading.Event(),
+    session_ready=threading.Event(),
+    browser_opened=False,
+    camera_started=False,
+    current_transcript="",
+    face_ws=None,
+    last_pushed_viseme=None,
+    face_fallback_http=False,
+)
 
 def on_open(ws):
-    global _ws, _camera_started
-    _ws = ws
+    state.ws = ws
     print("✅ 连接已建立，可以说话了！")
     print(f"   Tutor: {tutor.emoji} {tutor.name} ({tutor.voice})")
     print("   [Ctrl+C 退出]\n")
@@ -146,7 +153,7 @@ def on_open(ws):
     # 启动麦克风发送线程
     def send_audio():
         first = True
-        while _running:
+        while state.running:
             try:
                 data = bytes(mic.read(CHUNK)[0])  # sounddevice returns (data, overflow)
                 ws.send(json.dumps({
@@ -155,7 +162,7 @@ def on_open(ws):
                 }))
                 if first:
                     first = False
-                    _audio_started.set()  # signal camera: audio flowing
+                    state.audio_started.set()  # signal camera: audio flowing
             except Exception as e:
                 print(f"  ⚠️ mic error: {e}")
                 break
@@ -164,8 +171,8 @@ def on_open(ws):
     # 启动摄像头发送线程（等 session 确认 + 音频就绪后再发图像）
     if camera:
         # Camera reader: singleton — started once, not recreated on reconnect
-        if not _camera_started:
-            _camera_started = True
+        if not state.camera_started:
+            state.camera_started = True
             _camera_latest_b64 = [None]
             _camera_frame_lock = threading.Lock()
 
@@ -174,7 +181,7 @@ def on_open(ws):
                 if cap is None:
                     return
                 frame_interval = 1.0 / max(camera.fps, 1)
-                while _running:
+                while state.running:
                     try:
                         ret, img = cap.read()
                         if ret:
@@ -189,11 +196,11 @@ def on_open(ws):
             threading.Thread(target=_camera_reader, daemon=True).start()
 
             def _camera_preview():
-                _session_ready.wait()
-                _audio_started.wait()
+                state.session_ready.wait()
+                state.audio_started.wait()
                 print("   📷 Camera streaming started")
                 last_keyframe_time = 0
-                while _running:
+                while state.running:
                     try:
                         with _camera_frame_lock:
                             b64 = _camera_latest_b64[0]
@@ -223,57 +230,51 @@ def on_open(ws):
 # arrives — no ring buffer, no polling thread, no timing drift.
 # Audio plays and mouth moves in perfect sync by construction.
 
-_current_transcript = ""  # for dashboard display only
 
-_face_ws = None  # persistent WebSocket to dashboard /ws/emma/source
-_last_pushed_viseme = None  # dedup viseme label
-_face_fallback_http = False  # True if WS failed, use HTTP POST instead
 
 def _init_face_ws():
     """Connect to dashboard WebSocket for low-latency face + camera push.
     Falls back to HTTP POST if WebSocket is unavailable (old dashboard)."""
-    global _face_ws, _face_fallback_http
     import websocket as _wslib
     import time as _t
     for attempt in range(5):  # reduced from 10 — fail fast if old server
         try:
-            _face_ws = _wslib.create_connection(
+            state.face_ws = _wslib.create_connection(
                 "ws://localhost:8200/ws/emma/source", timeout=2)
             print("   ✅ Face WS connected to dashboard")
-            _face_fallback_http = False
+            state.face_fallback_http = False
             return
         except Exception as e:
             if attempt == 0:
                 print(f"   ⚠️ WS connect failed ({e}), retrying...")
             _t.sleep(0.5)
     # Fallback: use HTTP POST (works with old dashboard too)
-    _face_fallback_http = True
+    state.face_fallback_http = True
     print("   ⚠️ WS unavailable, falling back to HTTP POST for face sync")
 
 def _send_viseme_payload(payload: dict):
     """Send viseme via WS, with auto-reconnect + HTTP fallback."""
-    global _face_ws, _face_fallback_http
 
     # WebSocket path
-    if _face_ws is not None and not _face_fallback_http:
+    if state.face_ws is not None and not state.face_fallback_http:
         try:
-            _face_ws.send(json.dumps(payload))
+            state.face_ws.send(json.dumps(payload))
             return
         except Exception:
-            try: _face_ws.close()
+            try: state.face_ws.close()
             except: pass
-            _face_ws = None
+            state.face_ws = None
 
     # Try reconnect once
-    if _face_ws is None and not _face_fallback_http:
+    if state.face_ws is None and not state.face_fallback_http:
         try:
             import websocket as _wslib
-            _face_ws = _wslib.create_connection(
+            state.face_ws = _wslib.create_connection(
                 "ws://localhost:8200/ws/emma/source", timeout=1)
-            _face_ws.send(json.dumps(payload))
+            state.face_ws.send(json.dumps(payload))
             return
         except Exception:
-            _face_ws = None
+            state.face_ws = None
 
     # HTTP fallback
     try:
@@ -284,13 +285,12 @@ def _send_viseme_payload(payload: dict):
 
 def _push_face_viseme(viseme, full_transcript: str):
     """Push viseme (must be Viseme object). Dedups unchanged labels."""
-    global _last_pushed_viseme
 
     if not isinstance(viseme, Viseme):
         return
-    if viseme.label == _last_pushed_viseme:
+    if viseme.label == state.last_pushed_viseme:
         return
-    _last_pushed_viseme = viseme.label
+    state.last_pushed_viseme = viseme.label
 
     try:
         from camera_tutor.live2d_bridge import VisemeParams
@@ -310,7 +310,6 @@ def _push_face_viseme(viseme, full_transcript: str):
 
 
 def on_message(ws, message):
-    global _current_transcript, _browser_opened, _last_pushed_viseme
 
     try:
         event = json.loads(message)
@@ -323,9 +322,9 @@ def on_message(ws, message):
         print(f"  [event] {event_type}", flush=True)
 
     if event_type == "session.updated":
-        _session_ready.set()
-        if not _browser_opened:
-            _browser_opened = True
+        state.session_ready.set()
+        if not state.browser_opened:
+            state.browser_opened = True
             try:
                 import webbrowser, httpx as _hx
                 for p in ["/static/face_preview.html", "/static/live2d/bundle.js",
@@ -345,32 +344,32 @@ def on_message(ws, message):
         try:
             from camera_tutor.spectral_viseme import chunk_to_visemes
             for v in chunk_to_visemes(chunk, RATE_SPK):
-                _push_face_viseme(v, _current_transcript)
+                _push_face_viseme(v, state.current_transcript)
         except Exception:
             pass
 
     elif event_type == "response.audio_transcript.delta":
         delta = event.get("delta", "")
         if delta:
-            _current_transcript += delta
+            state.current_transcript += delta
 
     elif event_type == "response.audio_transcript.done":
         transcript = event.get("transcript", "")
         if transcript:
             print(f"  🤖 {tutor.name}: {transcript}")
-            _current_transcript = transcript
+            state.current_transcript = transcript
 
     elif event_type == "response.audio.done":
-        _last_pushed_viseme = None
+        state.last_pushed_viseme = None
         _push_face_viseme(Viseme.V00_SIL, "")
-        _current_transcript = ""
+        state.current_transcript = ""
 
     elif event_type == "conversation.item.input_audio_transcription.completed":
         child_text = event.get("transcript", "")
         if child_text:
             print(f"  👧 Child: {child_text}")
             import time as _tm
-            _last_audio_time[0] = _tm.time()
+            state.last_audio_time[0] = _tm.time()
 
     elif event_type == "error":
         err = event.get("error", {})
@@ -429,8 +428,7 @@ import websocket
 import signal
 
 def _handle_sigint(sig, frame):
-    global _running, ws
-    _running = False
+    state.running = False
     try: ws.close()
     except: pass
 
@@ -448,9 +446,9 @@ _start_dashboard(8200)
 _init_face_ws()  # connect dashboard WebSocket for face/camera push
 
 # 清空上次的嘴型状态 (via WebSocket)
-if _face_ws:
+if state.face_ws:
     try:
-        _face_ws.send(json.dumps({"type": "viseme", "viseme": "rest",
+        state.face_ws.send(json.dumps({"type": "viseme", "viseme": "rest",
             "mouth_open": 0.0, "mouth_width": 0.0, "tongue_visible": 0.0,
             "transcript": ""}))
     except: pass
@@ -466,18 +464,18 @@ ws = websocket.WebSocketApp(
     on_close=on_close,
 )
 
-while _running:
+while state.running:
     try:
         ws.run_forever(ping_interval=120)
     except KeyboardInterrupt:
-        _running = False
+        state.running = False
         break
-    if not _running:
+    if not state.running:
         break
     print("   ⏳ Omni API 重连中...")
     time.sleep(2)
-    _audio_started.clear()
-    _session_ready.clear()
+    state.audio_started.clear()
+    state.session_ready.clear()
     ws = websocket.WebSocketApp(
         WS_URL,
         header=[f"Authorization: Bearer {API_KEY}"],

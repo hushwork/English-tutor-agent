@@ -447,13 +447,12 @@ class CameraTutorAgent:
             if transcript:
                 logger.info("👧 Child: %s", transcript)
                 self._last_child_utterance = transcript
-                # Log to memory
+                # NOTE: child transcript from ASR is unreliable (accent, noise).
+                # Omni's semantic understanding is correct, but the text output
+                # often has errors. We log/save it for reference but do NOT run
+                # error detection or vocabulary extraction on it.
                 if self.memory:
                     self.memory.save_message("user", transcript)
-                if self.reporter:
-                    self.reporter.log_event("child_spoke_english", {"text": transcript[:200]})
-                # Extract vocabulary & errors
-                self._check_vocabulary(transcript, is_emma=False)
 
         elif event_type == "error":
             err = event.get("error", {})

@@ -147,13 +147,11 @@ class VisionManager:
     def _preview_loop(self) -> None:
         """Periodically send frames to WebSocket + Dashboard HTTP.
 
-        WS interval is dynamically adjusted by SceneProber via agent:
-        - Active/interacting → 5s
-        - Focused/studying → 30s
-        - Sleeping/resting → skip entirely (interval = infinity)
-        """
+        WS images start after 2s delay — audio must arrive first
+        (Omni requires audio-before-image on session start)."""
         last_keyframe_time = 0.0
-        preview_interval = 0.2   # Send preview to dashboard every 200ms
+        preview_interval = 0.2
+        _image_start = time.time() + 2.0  # wait for mic to produce audio
 
         while not self._stop_event.is_set():
             try:
@@ -164,11 +162,11 @@ class VisionManager:
 
                 now = time.time()
 
-                # Push to dashboard HTTP (always, for camera preview)
+                # Push to dashboard HTTP (always)
                 self._push_to_dashboard(b64)
 
-                # Push to WebSocket (rate-limited)
-                if now - last_keyframe_time >= self.ws_interval:
+                # Push to WebSocket (rate-limited, starts after audio)
+                if now >= _image_start and now - last_keyframe_time >= self.ws_interval:
                     last_keyframe_time = now
                     self._push_to_websocket(b64)
 

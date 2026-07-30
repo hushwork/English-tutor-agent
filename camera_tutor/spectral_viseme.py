@@ -147,9 +147,9 @@ _MFCC_SILENCE = 0.005  # same threshold as old code
 def classify_viseme(signal: np.ndarray, sr: int) -> Viseme:
     """Classify a 20ms window into a Viseme. Calibrated on Emma speech.
 
-    Uses 13 MFCC coefficients. Thresholds from real Emma audio
-    (38s, 1896 frames). Vowels: c1=height, c2=frontness.
-    Consonants: hf=high-freq roughness, c3=mid-freq detail.
+    Calibrated: Emma speech energy p50=0.09, p75=0.13, p90=0.16.
+    Consonant gates use high-energy tail only. Most frames (60-70%)
+    fall through to vowel classification.
     """
     mfcc, energy = _compute_features(signal, sr)
     if energy < 0.005:
@@ -160,41 +160,44 @@ def classify_viseme(signal: np.ndarray, sr: int) -> Viseme:
     c3 = mfcc[3]
     hf = abs(mfcc[6]) + abs(mfcc[7])
 
-    # ── Consonants (high-freq dominated) ──
-    if hf > 60 and energy > 0.02:
-        return Viseme.V15_S_Z           # /s/,/z/
-    if hf > 50:
-        return Viseme.V16_SH_ZH         # /ʃ/,/ʒ/
-    if hf > 40 and abs(c3) > 10:
-        return Viseme.V18_F_V if c2 > 5 else Viseme.V17_TH_DH
+    # ── Consonants (high-freq dominated, only ~15% of frames) ──
+    if hf > 65:
+        return Viseme.V15_S_Z
+    if hf > 55:
+        return Viseme.V16_SH_ZH
+    if hf > 45 and abs(c3) > 12:
+        return Viseme.V18_F_V if c2 > 6 else Viseme.V17_TH_DH
 
-    if energy > 0.03 and abs(c3) > 20:
+    # Stops: only the loudest 5% (energy > p95)
+    if energy > 0.17 and abs(c3) > 15:
         return Viseme.V19_T_D_N
-    if energy > 0.04 and abs(c3) > 15:
+    if energy > 0.15 and abs(c3) > 10:
         return Viseme.V20_K_G_NG
-    if energy > 0.06:
+    if energy > 0.19:
         return Viseme.V21_P_B_M
 
-    if energy < 0.012 and abs(c2) < 3:
+    # Clean consonants
+    if energy < 0.01 and abs(c2) < 2:
         return Viseme.V12_H
-    if 0.01 < energy < 0.03 and abs(c2) < 10 and c3 > 0:
+    if 0.005 < energy < 0.02 and abs(c2) < 8 and c3 > 0:
         return Viseme.V14_L
-    if c3 < -5 and c2 < -5:
+    if c3 < -8 and c2 < -8:
         return Viseme.V13_R
 
-    # ── Vowels ──
-    if c2 > 12:
-        return Viseme.V06_IY_IH if c1 < 15 else Viseme.V04_EH_EY
-    if c2 > 5:
+    # ── Vowels (60-70% of frames) ──
+    if c2 > 14:
+        return Viseme.V06_IY_IH if c1 < 12 else Viseme.V04_EH_EY
+    if c2 > 6:
+        if c1 > 22:  return Viseme.V01_AE_AH
         return Viseme.V01_AE_AH
-    if c2 > -2:
-        if c1 > 25:   return Viseme.V02_AA
-        if c1 > 18:   return Viseme.V05_ER
-        if c1 > 12:   return Viseme.V03_AO
+    if c2 > -1:
+        if c1 > 28:  return Viseme.V02_AA
+        if c1 > 20:  return Viseme.V05_ER
+        if c1 > 14:  return Viseme.V03_AO
         return Viseme.V02_AA
-    if c1 > 22:
+    if c1 > 24:
         return Viseme.V08_OW
-    if c1 > 10:
+    if c1 > 14:
         return Viseme.V03_AO
     return Viseme.V07_UW_W
 

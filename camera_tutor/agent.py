@@ -45,8 +45,6 @@ from camera_tutor.parent_report import ParentReportEngine
 from english_tutor.memory import ConversationMemory
 from english_tutor.spaced_repetition import SpacedRepetition
 
-from camera_tutor.scene_prober import SceneProber
-
 logger = logging.getLogger(__name__)
 
 
@@ -154,7 +152,6 @@ class CameraTutorAgent:
         self.memory: Optional[ConversationMemory] = None
         self.sr: Optional[SpacedRepetition] = None
         self.reporter: Optional[ParentReportEngine] = None
-        self.scene_prober: Optional[SceneProber] = None
         self._storage_dir: Path = Path(
             __file__).resolve().parent.parent / ".camera-tutor-data"
 
@@ -163,7 +160,6 @@ class CameraTutorAgent:
         self._last_emma_utterance: str = ""
         self._utterances_this_session: int = 0
         self._recent_emma_phrases: list[str] = []
-        self._speech_mood: str = ""     # mood derived from child's last utterance
 
         # Signal handling
         self._signal_setup_done = False
@@ -196,15 +192,6 @@ class CameraTutorAgent:
 
         self.reporter = ParentReportEngine(storage_dir=self._storage_dir)
 
-        # Scene prober (periodic scene analysis via Omni REST)
-        self.scene_prober = SceneProber(
-            frame_getter=self._get_latest_camera_frame,
-            ws_getter=self._get_current_ws,
-            api_key=self.config.api_key,
-            instructions_builder=self._build_instructions,
-            on_analysis=self._on_scene_analysis,
-        )
-
         # Register signal handler
         if not self._signal_setup_done:
             signal.signal(signal.SIGINT, self._handle_sigint)
@@ -212,51 +199,6 @@ class CameraTutorAgent:
             self._signal_setup_done = True
 
         logger.info("Agent setup complete")
-
-    def _get_latest_camera_frame(self) -> Optional[str]:
-        """Get the latest camera frame b64 for the scene prober."""
-        if self.vision is None or not self.vision.is_running:
-            return None
-        return self.vision._latest_frame()
-
-    def _get_current_ws(self) -> Optional[object]:
-        """Get the current WebSocket connection for scene injection."""
-        if self.connection is None or self.connection.ws is None:
-            return None
-        return self.connection.ws
-
-    def _on_scene_analysis(self, snapshot: object) -> None:
-        """Adjust VisionManager's WS image frequency based on child's state.
-
-        Called by SceneProber after each scene analysis.
-        - Active/interacting → aggressive image push (5s)
-        - Focused/studying → minimal push (30s)
-        - Sleeping/resting/quiet → skip WS images entirely
-        """
-        if self.vision is None:
-            return
-        activity = getattr(snapshot, "activity", "")
-        mood = getattr(snapshot, "mood", "")
-        should_engage = getattr(snapshot, "should_engage", True)
-
-        if activity in ("sleeping", "resting") or mood == "tired":
-            interval = 0.0
-        elif activity in ("studying", "reading") or mood == "focused":
-            interval = 30.0
-        elif should_engage and mood in ("happy", "bored"):
-            interval = 5.0
-        else:
-            interval = 10.0
-
-        old = self.vision.ws_interval
-        if interval != old:
-            self.vision.ws_interval = interval
-            if interval == 0.0:
-                logger.info("Scene: WS images paused (%s/%s)", activity, mood)
-            elif old == 0.0:
-                logger.info("Scene: WS images resumed (every %.0fs, %s/%s)", interval, activity, mood)
-            else:
-                logger.debug("Scene: WS interval %.0fs → %.0fs (%s/%s)", old, interval, activity, mood)
 
     def _setup_camera(self) -> None:
         """Try to initialise the camera pipeline."""
@@ -358,10 +300,6 @@ class CameraTutorAgent:
         if self.camera:
             self.camera.stop()
 
-        # Stop scene prober
-        if self.scene_prober:
-            self.scene_prober.stop()
-
         # Save memory state
         if self.memory:
             try:
@@ -420,18 +358,6 @@ class CameraTutorAgent:
         if self.camera:
             self.vision = VisionManager(camera=self.camera, ws_getter=lambda: ws)
             self.vision.start()
-
-        # Start scene prober (periodic scene analysis via REST)
-        if self.scene_prober:
-            self.scene_prober.stop()
-        self.scene_prober = SceneProber(
-            frame_getter=self._get_latest_camera_frame,
-            ws_getter=self._get_current_ws,
-            api_key=self.config.api_key,
-            instructions_builder=self._build_instructions,
-            on_analysis=self._on_scene_analysis,
-        )
-        self.scene_prober.start()
 
         self._print_welcome()
 
@@ -494,10 +420,6 @@ class CameraTutorAgent:
             if transcript:
                 logger.info("👧 Child: %s", transcript)
                 self._last_child_utterance = transcript
-                self._speech_mood = self._analyze_child_mood(transcript)
-                if self._speech_mood:
-                    # Child expressed a mood — inject immediately into prompt
-                    self._inject_instructions()
                 # Log to memory
                 if self.memory:
                     self.memory.save_message("user", transcript)
@@ -648,19 +570,6 @@ class CameraTutorAgent:
                 f"\nUse completely different words and sentence structures.\n"
             )
 
-        # Scene context (from SceneProber)
-        scene_line = ""
-        if self.scene_prober:
-            ctx = self.scene_prober.scene_context()
-            if ctx:
-                # Merge speech-derived mood (higher priority than visual)
-                if self._speech_mood:
-                    ctx = ctx.replace(
-                        f"| mood: {self.scene_prober.latest.mood if self.scene_prober.latest else ''}",
-                        f"| mood: {self._speech_mood} (child said so)",
-                    )
-                scene_line = f"\nCURRENT SCENE (real-time analysis):\n{ctx}\n"
-
         return (
             f"You are {self.tutor.name}, a {self.tutor.teaching_style} English tutor "
             f"for a {child_age}-year-old child.\n"
@@ -669,16 +578,20 @@ class CameraTutorAgent:
             f"{self.tutor._tutor_rules()}\n\n"
             f"IMPORTANT: The child speaks ENGLISH. Transcribe as English.\n\n"
             f"VISION: You receive real-time camera images — use what you SEE.\n\n"
-            f"{session_info}{vocab_line}{errors_line}{due_line}{recent_line}{scene_line}"
-            f"CRITICAL RULES:\n"
+            f"{session_info}{vocab_line}{errors_line}{due_line}{recent_line}"
+            f"BEHAVIORAL GUIDELINES:\n"
             f"1. MAXIMUM {w} words per sentence. ONE sentence only.\n"
             f"2. Use only simple words a {child_age}-year-old can understand.\n"
             f"3. NEVER repeat the same sentence structure you used recently.\n"
             f"4. Praise every attempt to speak English.\n"
-            f"5. If you SEE something interesting in the camera, mention it.\n"
-            f"6. This is turn #{self._utterances_this_session + 1} in this conversation.\n"
-            f"7. If the child struggles, model the correct form patiently.\n"
-            f"8. Use at least one word from the child's known vocabulary.\n"
+            f"5. If you SEE something interesting in the camera, mention it naturally.\n"
+            f"6. You can see AND hear the child. Use your own judgment:\n"
+            f"   - If the child says they're tired → gentle, quieter, fewer words\n"
+            f"   - If the child seems deeply focused → stay silent, don't interrupt\n"
+            f"   - If the child is excited or playful → match their energy\n"
+            f"   - If nothing has happened for a while → be patient, don't force it\n"
+            f"7. If the child struggles with a word, model it correctly.\n"
+            f"8. Use at least one word from the child's known vocabulary when possible.\n"
         )
 
     def _get_child_age(self) -> int:
@@ -724,35 +637,6 @@ class CameraTutorAgent:
             f"- Vocabulary tracked: {len(s.get('vocabulary', []))} words\n"
             f"- Spaced repetition cards: {sr_total} cards\n\n"
         )
-
-    def _inject_instructions(self) -> None:
-        """Inject updated instructions into the conversation WS immediately."""
-        ws = self._get_current_ws()
-        if ws is None:
-            return
-        try:
-            ws.send(json.dumps({
-                "type": "session.update",
-                "session": {"instructions": self._build_instructions()},
-            }))
-        except Exception as e:
-            logger.debug("Instructions inject error: %s", e)
-
-    def _analyze_child_mood(self, text: str) -> str:
-        """Extract mood from child's speech. Returns empty if no clear signal."""
-        import re
-        t = text.lower().strip()
-        for pattern, mood in [
-            (r"\b(tired|sleepy|exhausted)\b", "tired"),
-            (r"\b(bored|boring|nothing to do)\b", "bored"),
-            (r"\b(yay|wow|love it|so fun|amazing|great)\b", "happy"),
-            (r"\b(sad|unhappy|crying|don't like|hate)\b", "frustrated"),
-            (r"\b(scared|afraid|frightened)\b", "frustrated"),
-            (r"\b(hungry|thirsty)\b", "tired"),
-        ]:
-            if re.search(pattern, t):
-                return mood
-        return ""
 
     def _check_vocabulary(self, text: str, is_emma: bool) -> None:
         if not text.strip():

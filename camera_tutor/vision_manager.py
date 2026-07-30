@@ -63,9 +63,7 @@ class VisionManager:
         self._threads: list[threading.Thread] = []
         self._started = False
 
-        # Adaptive WS push interval (mutated by SceneProber via agent)
-        self.ws_interval: float = 5.0      # active → 5s
-        self._ws_lock = threading.Lock()
+        # WS push interval (every 5s — consistent, low overhead)
 
         # Frame buffer (thread-safe: latest JPEG base64)
         self._frame_lock = threading.Lock()

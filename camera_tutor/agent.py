@@ -45,6 +45,8 @@ from camera_tutor.parent_report import ParentReportEngine
 from english_tutor.memory import ConversationMemory
 from english_tutor.spaced_repetition import SpacedRepetition
 
+from camera_tutor.scene_prober import SceneProber
+
 logger = logging.getLogger(__name__)
 
 
@@ -152,6 +154,7 @@ class CameraTutorAgent:
         self.memory: Optional[ConversationMemory] = None
         self.sr: Optional[SpacedRepetition] = None
         self.reporter: Optional[ParentReportEngine] = None
+        self.scene_prober: Optional[SceneProber] = None
         self._storage_dir: Path = Path(
             __file__).resolve().parent.parent / ".camera-tutor-data"
 
@@ -192,6 +195,14 @@ class CameraTutorAgent:
 
         self.reporter = ParentReportEngine(storage_dir=self._storage_dir)
 
+        # Scene prober (periodic scene analysis via Omni REST)
+        self.scene_prober = SceneProber(
+            frame_getter=self._get_latest_camera_frame,
+            ws_getter=self._get_current_ws,
+            api_key=self.config.api_key,
+            instructions_builder=self._build_instructions,
+        )
+
         # Register signal handler
         if not self._signal_setup_done:
             signal.signal(signal.SIGINT, self._handle_sigint)
@@ -199,6 +210,18 @@ class CameraTutorAgent:
             self._signal_setup_done = True
 
         logger.info("Agent setup complete")
+
+    def _get_latest_camera_frame(self) -> Optional[str]:
+        """Get the latest camera frame b64 for the scene prober."""
+        if self.vision is None or not self.vision.is_running:
+            return None
+        return self.vision._latest_frame()
+
+    def _get_current_ws(self) -> Optional[object]:
+        """Get the current WebSocket connection for scene injection."""
+        if self.connection is None or self.connection.ws is None:
+            return None
+        return self.connection.ws
 
     def _setup_camera(self) -> None:
         """Try to initialise the camera pipeline."""
@@ -300,6 +323,10 @@ class CameraTutorAgent:
         if self.camera:
             self.camera.stop()
 
+        # Stop scene prober
+        if self.scene_prober:
+            self.scene_prober.stop()
+
         # Save memory state
         if self.memory:
             try:
@@ -358,6 +385,17 @@ class CameraTutorAgent:
         if self.camera:
             self.vision = VisionManager(camera=self.camera, ws_getter=lambda: ws)
             self.vision.start()
+
+        # Start scene prober (periodic scene analysis via REST)
+        if self.scene_prober:
+            self.scene_prober.stop()
+        self.scene_prober = SceneProber(
+            frame_getter=self._get_latest_camera_frame,
+            ws_getter=self._get_current_ws,
+            api_key=self.config.api_key,
+            instructions_builder=self._build_instructions,
+        )
+        self.scene_prober.start()
 
         self._print_welcome()
 
@@ -570,6 +608,13 @@ class CameraTutorAgent:
                 f"\nUse completely different words and sentence structures.\n"
             )
 
+        # Scene context (from SceneProber)
+        scene_line = ""
+        if self.scene_prober:
+            ctx = self.scene_prober.scene_context()
+            if ctx:
+                scene_line = f"\nCURRENT SCENE (real-time analysis):\n{ctx}\n"
+
         return (
             f"You are {self.tutor.name}, a {self.tutor.teaching_style} English tutor "
             f"for a {child_age}-year-old child.\n"
@@ -578,7 +623,7 @@ class CameraTutorAgent:
             f"{self.tutor._tutor_rules()}\n\n"
             f"IMPORTANT: The child speaks ENGLISH. Transcribe as English.\n\n"
             f"VISION: You receive real-time camera images — use what you SEE.\n\n"
-            f"{session_info}{vocab_line}{errors_line}{due_line}{recent_line}"
+            f"{session_info}{vocab_line}{errors_line}{due_line}{recent_line}{scene_line}"
             f"CRITICAL RULES:\n"
             f"1. MAXIMUM {w} words per sentence. ONE sentence only.\n"
             f"2. Use only simple words a {child_age}-year-old can understand.\n"

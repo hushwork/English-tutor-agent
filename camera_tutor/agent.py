@@ -163,6 +163,7 @@ class CameraTutorAgent:
         self._last_emma_utterance: str = ""
         self._utterances_this_session: int = 0
         self._recent_emma_phrases: list[str] = []
+        self._speech_mood: str = ""     # mood derived from child's last utterance
 
         # Signal handling
         self._signal_setup_done = False
@@ -493,6 +494,10 @@ class CameraTutorAgent:
             if transcript:
                 logger.info("👧 Child: %s", transcript)
                 self._last_child_utterance = transcript
+                self._speech_mood = self._analyze_child_mood(transcript)
+                if self._speech_mood:
+                    # Child expressed a mood — inject immediately into prompt
+                    self._inject_instructions()
                 # Log to memory
                 if self.memory:
                     self.memory.save_message("user", transcript)
@@ -648,6 +653,12 @@ class CameraTutorAgent:
         if self.scene_prober:
             ctx = self.scene_prober.scene_context()
             if ctx:
+                # Merge speech-derived mood (higher priority than visual)
+                if self._speech_mood:
+                    ctx = ctx.replace(
+                        f"| mood: {self.scene_prober.latest.mood if self.scene_prober.latest else ''}",
+                        f"| mood: {self._speech_mood} (child said so)",
+                    )
                 scene_line = f"\nCURRENT SCENE (real-time analysis):\n{ctx}\n"
 
         return (
@@ -713,6 +724,35 @@ class CameraTutorAgent:
             f"- Vocabulary tracked: {len(s.get('vocabulary', []))} words\n"
             f"- Spaced repetition cards: {sr_total} cards\n\n"
         )
+
+    def _inject_instructions(self) -> None:
+        """Inject updated instructions into the conversation WS immediately."""
+        ws = self._get_current_ws()
+        if ws is None:
+            return
+        try:
+            ws.send(json.dumps({
+                "type": "session.update",
+                "session": {"instructions": self._build_instructions()},
+            }))
+        except Exception as e:
+            logger.debug("Instructions inject error: %s", e)
+
+    def _analyze_child_mood(self, text: str) -> str:
+        """Extract mood from child's speech. Returns empty if no clear signal."""
+        import re
+        t = text.lower().strip()
+        for pattern, mood in [
+            (r"\b(tired|sleepy|exhausted)\b", "tired"),
+            (r"\b(bored|boring|nothing to do)\b", "bored"),
+            (r"\b(yay|wow|love it|so fun|amazing|great)\b", "happy"),
+            (r"\b(sad|unhappy|crying|don't like|hate)\b", "frustrated"),
+            (r"\b(scared|afraid|frightened)\b", "frustrated"),
+            (r"\b(hungry|thirsty)\b", "tired"),
+        ]:
+            if re.search(pattern, t):
+                return mood
+        return ""
 
     def _check_vocabulary(self, text: str, is_emma: bool) -> None:
         if not text.strip():

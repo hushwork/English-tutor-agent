@@ -71,7 +71,7 @@ const VISEME_VOWEL: Record<string, [string, number]> = {
     // Neutralize body sway
     for (const id of _stillIds) m.setParameterValueById(id, 0);
     // Mouth open amount
-    const scaled = _mouthTarget < 0.06 ? 0 : Math.min(1, _mouthTarget * 2.5);
+    const scaled = _mouthTarget < 0.03 ? 0 : Math.min(1, _mouthTarget * 2.5);
     m.setParameterValueById(_mouthId, scaled);
     // Vowel shape based on viseme
     const [vowelParam, strength] = VISEME_VOWEL[_visemeType] || ['', 0];

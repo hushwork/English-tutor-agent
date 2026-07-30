@@ -50,6 +50,8 @@ class FaceSyncManager:
         self._ws = None
         self._http_fallback = False
         self._last_viseme_label: Optional[str] = None
+        self._last_push_time: float = 0.0
+        self._min_push_interval: float = 0.08  # 80ms — prevents burst flooding
         self._started = False
         self._ws_mod = None
 
@@ -108,6 +110,11 @@ class FaceSyncManager:
             return
         if viseme.label == self._last_viseme_label:
             return
+        # Rate limit: don't push faster than ~12fps
+        now = time.time()
+        if now - self._last_push_time < self._min_push_interval:
+            return
+        self._last_push_time = now
         self._last_viseme_label = viseme.label
 
         try:

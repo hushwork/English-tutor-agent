@@ -17805,7 +17805,7 @@ window._setMouthOpen = (open, viseme) => {
     for (const id of _stillIds) m.setParameterValueById(id, 0);
     // Smooth mouth towards target (prevents jerky jumps)
     _mouthCurrent = (_mouthCurrent || 0) + (_mouthTarget - (_mouthCurrent || 0)) * 0.35;
-    const scaled = _mouthCurrent < 0.06 ? 0 : Math.min(1, _mouthCurrent * 2.5);
+    const scaled = _mouthCurrent < 0.03 ? 0 : Math.min(1, _mouthCurrent * 2.5);
     m.setParameterValueById(_mouthId, scaled);
     const [vowelParam, strength] = VISEME_VOWEL[_visemeType] || ["", 0];
     for (const id of Object.values(_vowelIds)) m.setParameterValueById(id, 0);

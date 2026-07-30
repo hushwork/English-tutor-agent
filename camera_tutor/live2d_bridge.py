@@ -118,7 +118,7 @@ class VisemeParams:
             # V17 — /θ/ think, /ð/ this — TONGUE VISIBLE ☆☆☆☆☆
             Viseme.V17_TH_DH: cls(mouth_open=0.1,  mouth_width=0.35, mouth_form=0.45, tongue_visible=1.0),
             # V18 — /f/ five, /v/ very — LIP BITE ☆☆☆☆☆
-            Viseme.V18_F_V:   cls(mouth_open=0.03, mouth_width=0.35, mouth_form=0.4, lip_bite=0.95),
+            Viseme.V18_F_V:   cls(mouth_open=0.12, mouth_width=0.35, mouth_form=0.4, lip_bite=0.95),
             # V19 — /t/ top, /d/ dog, /n/ no — tongue on ridge
             Viseme.V19_T_D_N: cls(mouth_open=0.08, mouth_width=0.3, mouth_form=0.5, tongue_visible=0.3),
             # V20 — /k/ cat, /g/ go — back of mouth

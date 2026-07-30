@@ -1,20 +1,18 @@
 #!/usr/bin/env python3
-"""MFCC calibration tool — analyzes real Emma speech to find good thresholds.
+"""MFCC calibration — analyze recorded Emma audio for threshold tuning.
 
-Usage:
-  # Record Emma speaking and save as WAV (24kHz mono 16-bit)
-  # Then run:
-  python3 camera_tutor/calibrate_mfcc.py path/to/emma_speech.wav
+Two-step workflow:
 
-  # Or generate a test tone:
-  python3 camera_tutor/calibrate_mfcc.py --sweep
+  1. Record audio:
+     SAVE_CALIBRATION_AUDIO=1 python3 camera_tutor/realtime_demo.py
+     # Talk to Emma for a few sentences, then Ctrl+C
+     # WAV files saved to .camera-tutor-data/calibration/
 
-Output: prints MFCC coefficient ranges (min/max/mean/std) and
-viseme distribution, so you can tune the classify_viseme thresholds.
+  2. Analyze:
+     python3 camera_tutor/calibrate_mfcc.py .camera-tutor-data/calibration/
+     # Prints MFCC ranges and recommended thresholds for classify_viseme
 """
 
-import argparse
-import struct
 import sys
 import wave
 from pathlib import Path
@@ -23,137 +21,97 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from camera_tutor.spectral_viseme import _mfcc, classify_viseme
-from camera_tutor.avatar import Viseme
+from camera_tutor.spectral_viseme import _mfcc
 
 
-def analyze_file(wav_path: str) -> None:
-    """Analyze a WAV file frame-by-frame."""
-    with wave.open(wav_path, "rb") as wf:
-        sr = wf.getframerate()
-        n_frames = wf.getnframes()
-        raw = wf.readframes(n_frames)
+def analyze_dir(wav_dir: str) -> None:
+    """Analyze all WAV files in a directory."""
+    wav_files = sorted(Path(wav_dir).glob("*.wav"))
+    if not wav_files:
+        print(f"❌ No WAV files found in {wav_dir}")
+        print("   Run: SAVE_CALIBRATION_AUDIO=1 python3 camera_tutor/realtime_demo.py")
+        return
+
+    print(f"=== Analyzing {len(wav_files)} WAV files ===")
+    all_arr = []
+    total_frames = 0
+
+    for wf in wav_files:
+        try:
+            with wave.open(str(wf), "rb") as f:
+                sr = f.getframerate()
+                raw = f.readframes(f.getnframes())
+        except Exception as e:
+            print(f"  ⚠️  Skip {wf.name}: {e}")
+            continue
+
         signal = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+        win_samples = int(sr * 0.020)
+        hop_samples = int(sr * 0.030)
 
-    print(f"File: {wav_path}")
-    print(f"Sample rate: {sr} Hz, duration: {n_frames/sr:.1f}s, channels: {wf.getnchannels()}")
-    print()
+        count = 0
+        for start in range(0, len(signal) - win_samples + 1, hop_samples):
+            window = signal[start:start + win_samples]
+            window = window * np.hanning(len(window))
+            if float(np.sqrt(np.mean(window**2))) < 0.005:
+                continue
+            mfcc = _mfcc(window, sr, n_mfcc=13)
+            all_arr.append(mfcc)
+            count += 1
 
-    # Process in 20ms windows with 30ms stride
-    win_samples = int(sr * 0.020)
-    hop_samples = int(sr * 0.030)
+        dur = len(signal) / sr
+        print(f"  {wf.name}: {count} speech frames, {dur:.1f}s")
+        total_frames += count
 
-    mfcc_buf = []       # all MFCC vectors (silence excluded)
-    viseme_counts = {}  # viseme → count
-    total = 0
+    if not all_arr:
+        print("❌ No speech frames found")
+        return
 
-    for start in range(0, len(signal) - win_samples + 1, hop_samples):
-        window = signal[start:start + win_samples]
-        window = window * np.hanning(len(window))
-        energy = float(np.sqrt(np.mean(window**2)))
-        if energy < 0.005:
-            continue  # skip silence
+    arr = np.array(all_arr)  # (n_frames, 13)
+    hf = np.abs(arr[:, 6]) + np.abs(arr[:, 7])
+    energy = np.array([float(np.sqrt(np.mean(w**2))) for w in [
+        np.hanning(len(w)) * w for w in [arr[i] for i in range(min(len(arr), 100))]
+    ]])  # rough proxy
 
-        mfcc = _mfcc(window, sr, n_mfcc=13)
-        mfcc_buf.append(mfcc)
-        v = classify_viseme(window, sr)
-        label = v.name
-        viseme_counts[label] = viseme_counts.get(label, 0) + 1
-        total += 1
-
-    mfcc_arr = np.array(mfcc_buf)  # (n_frames, 13)
-
-    print(f"Analyzed {total} non-silent frames ({len(signal)/sr:.1f}s audio)")
-    print()
-
-    # Per-coefficient statistics
-    print("=== MFCC Coefficient Ranges ===")
-    print(f"{'Coef':>5} {'Min':>10} {'Max':>10} {'Mean':>10} {'Std':>10}")
-    print("-" * 48)
+    print(f"\n=== MFCC Statistics ({total_frames} frames) ===")
+    print(f"{'Coeff':>6} {'Min':>8} {'Max':>8} {'Mean':>8} {'Std':>8}")
+    print("-" * 42)
     for i in range(13):
-        col = mfcc_arr[:, i]
-        print(f"C{i:<4d} {col.min():10.1f} {col.max():10.1f} {col.mean():10.1f} {col.std():10.1f}")
+        col = arr[:, i]
+        print(f"C{i:<5d} {col.min():8.1f} {col.max():8.1f} {col.mean():8.1f} {col.std():8.1f}")
 
-    # Derived features
-    print()
-    print("=== Derived Features ===")
-    energy_arr = np.array([np.sqrt(np.mean(w**2)) for w in [
-        signal[s:s+win_samples] for s in range(0, len(signal)-win_samples+1, hop_samples)
-    ][:len(mfcc_arr)]])
-    hf_arr = np.abs(mfcc_arr[:, 6]) + np.abs(mfcc_arr[:, 7])
-    c3_arr = mfcc_arr[:, 3]
-    for name, arr in [("Energy", energy_arr), ("hf_rough", hf_arr), ("|c3|", np.abs(c3_arr))]:
-        print(f"  {name:10s}: min={arr.min():.4f} max={arr.max():.4f}  "
-              f"p50={np.percentile(arr,50):.4f} p90={np.percentile(arr,90):.4f}")
+    print(f"\nDerived: hf_rough [p50={np.percentile(hf,50):.1f}, p75={np.percentile(hf,75):.1f}, p90={np.percentile(hf,90):.1f}]")
 
-    # Viseme distribution
-    print()
-    print("=== Viseme Distribution ===")
-    sorted_v = sorted(viseme_counts.items(), key=lambda x: -x[1])
-    for name, count in sorted_v:
-        bar = "█" * int(count / max(1, total) * 40)
-        print(f"  {name:14s}: {count:4d} ({count/total*100:5.1f}%) {bar}")
+    print(f"\n=== Suggested classify_viseme thresholds ===")
+    c1 = arr[:, 1]
+    c2 = arr[:, 2]
+    c1_p = [np.percentile(c1, p) for p in [10, 25, 50, 75, 90]]
+    c2_p = [np.percentile(c2, p) for p in [10, 25, 50, 75, 90]]
+    hf_p = [np.percentile(hf, p) for p in [50, 75, 90, 95]]
 
-    # Vowel vs consonant breakdown
-    vowel_labels = {"V01_AE_AH","V02_AA","V03_AO","V04_EH_EY","V05_ER",
-                    "V06_IY_IH","V07_UW_W","V08_OW","V09_AW","V10_OY","V11_AY"}
-    consonant_labels = {"V12_H","V13_R","V14_L","V15_S_Z","V16_SH_ZH",
-                        "V17_TH_DH","V18_F_V","V19_T_D_N","V20_K_G_NG","V21_P_B_M"}
-    vowel_count = sum(c for n, c in viseme_counts.items() if n in vowel_labels)
-    cons_count = sum(c for n, c in viseme_counts.items() if n in consonant_labels)
-    sil_count = viseme_counts.get("V00_SIL", 0)
-    print(f"\n  Vowels: {vowel_count} ({vowel_count/total*100:.0f}%)  "
-          f"Consonants: {cons_count} ({cons_count/total*100:.0f}%)  "
-          f"Silence: {sil_count}")
-
-
-def run_sweep() -> None:
-    """Analyze a frequency sweep to understand classifier behavior."""
-    import numpy as np
-    sr = 24000
-    win_samples = int(sr * 0.020)
-
-    print("=== Frequency Sweep Test ===")
-    print(f"{'Freq':>8} {'Energy':>10} {'c1':>8} {'c2':>8} {'hf':>7} {'→ viseme'}")
-    print("-" * 60)
-
-    for freq in [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000,
-                 1200, 1500, 1800, 2000, 2500, 3000, 4000]:
-        t = np.arange(0, win_samples / sr, 1 / sr)
-        signal = (np.sin(2 * np.pi * freq * t) * 0.3).astype(np.float32)
-        mfcc = _mfcc(signal * np.hanning(len(signal)), sr, n_mfcc=13)
-        v = classify_viseme(signal * np.hanning(len(signal)), sr)
-        hf = abs(mfcc[6]) + abs(mfcc[7])
-        energy = float(np.sqrt(np.mean(signal**2)))
-        print(f"  {freq:5}Hz   {energy:.6f}  {mfcc[1]:+7.1f}  {mfcc[2]:+7.1f}  "
-              f"{hf:5.1f}   → {v.name}")
-
-    # Noise test
-    print()
-    print("  noise    ...")
-    rng = np.random.RandomState(42)
-    for amp in [0.01, 0.03, 0.06, 0.1, 0.2]:
-        noise = (rng.randn(win_samples) * amp).astype(np.float32)
-        mfcc = _mfcc(noise * np.hanning(len(noise)), sr, n_mfcc=13)
-        energy = float(np.sqrt(np.mean(noise**2)))
-        v = classify_viseme(noise * np.hanning(len(noise)), sr)
-        hf = abs(mfcc[6]) + abs(mfcc[7])
-        print(f"  noise x{amp:.2f}  {energy:.6f}  {mfcc[1]:+7.1f}  {mfcc[2]:+7.1f}  "
-              f"{hf:5.1f}   → {v.name}")
+    print(f"  # Silence: energy < 0.005")
+    print(f"  # Sibilants: hf > {hf_p[3]:.0f} AND energy > 0.02")
+    print(f"  # Fricatives: hf > {hf_p[2]:.0f}")
+    print(f"  # c1 range: [{int(c1_p[0])}, {int(c1_p[4])}]")
+    print(f"  # c2 range: [{int(c2_p[0])}, {int(c2_p[4])}]")
+    print(f"  # c1 boundaries: {int(c1_p[0])}, {int(c1_p[1])}, {int(c1_p[2])}, {int(c1_p[3])}, {int(c1_p[4])}")
+    print(f"  # c2 boundaries: {int(c2_p[0])}, {int(c2_p[1])}, {int(c2_p[2])}, {int(c2_p[3])}, {int(c2_p[4])}")
 
 
 def main():
-    p = argparse.ArgumentParser(description="MFCC viseme calibration tool")
-    p.add_argument("wav_file", nargs="?", help="WAV file to analyze")
-    p.add_argument("--sweep", action="store_true", help="Run frequency sweep test")
-    args = p.parse_args()
+    if len(sys.argv) < 2:
+        default = Path(__file__).resolve().parent.parent / ".camera-tutor-data" / "calibration"
+        if default.is_dir():
+            analyze_dir(str(default))
+        else:
+            print(__doc__)
+        return
 
-    if args.sweep:
-        run_sweep()
-    elif args.wav_file:
-        analyze_file(args.wav_file)
+    path = sys.argv[1]
+    if Path(path).is_dir():
+        analyze_dir(path)
     else:
-        p.print_help()
+        print(__doc__)
 
 
 if __name__ == "__main__":

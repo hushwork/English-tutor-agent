@@ -307,7 +307,26 @@ class CameraTutorAgent:
             except Exception:
                 pass
 
+        if hasattr(self, "_calib_chunks") and self._calib_chunks:
+            self._save_calibration_wav()
+
         logger.info("Camera Tutor Agent stopped")
+
+    def _save_calibration_wav(self) -> None:
+        """Save accumulated audio chunks as WAV files for MFCC calibration."""
+        import wave
+        out_dir = self._storage_dir / "calibration"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        n = 1
+        while (out_dir / f"emma_{n:02d}.wav").exists():
+            n += 1
+        path = out_dir / f"emma_{n:02d}.wav"
+        with wave.open(str(path), "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)  # 16-bit PCM
+            wf.setframerate(24000)
+            wf.writeframes(b"".join(self._calib_chunks))
+        logger.info("Calibration audio saved: %s (%d bytes)", path, sum(len(c) for c in self._calib_chunks))
 
     # ── WebSocket event handlers ─────────────────────────────────
 
@@ -387,6 +406,11 @@ class CameraTutorAgent:
             chunk = base64.b64decode(event["delta"])
             self.audio.write_spk(chunk)
             self._process_viseme_chunk(chunk)
+            # Calibration: save audio to file if env var is set
+            if os.environ.get("SAVE_CALIBRATION_AUDIO"):
+                if not hasattr(self, "_calib_chunks"):
+                    self._calib_chunks = []
+                self._calib_chunks.append(chunk)
 
         elif event_type == "response.audio_transcript.delta":
             delta = event.get("delta", "")

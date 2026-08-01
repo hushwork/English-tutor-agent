@@ -155,8 +155,27 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 # ── Saved device config (auto-reuse last selection) ────────────
+# Stored inside the runtime data dir so it's git-ignored and travels
+# with the project checkout.
 
-CONFIG_PATH = os.path.join(Path.home(), ".camera-tutor-devices.json")
+CONFIG_PATH = os.path.join(
+    Path(__file__).resolve().parent.parent, ".camera-tutor-data", "devices.json"
+)
+_LEGACY_CONFIG_PATH = os.path.join(Path.home(), ".camera-tutor-devices.json")
+
+
+def _migrate_legacy_config() -> None:
+    """Move the old ~/.camera-tutor-devices.json into .camera-tutor-data/."""
+    if os.path.exists(_LEGACY_CONFIG_PATH) and not os.path.exists(CONFIG_PATH):
+        try:
+            os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+            os.replace(_LEGACY_CONFIG_PATH, CONFIG_PATH)
+            print(f"♻️  设备配置已迁移到: {CONFIG_PATH}", flush=True)
+        except OSError:
+            pass
+
+
+_migrate_legacy_config()
 
 
 def save_config(config: AgentConfig) -> None:
@@ -168,6 +187,7 @@ def save_config(config: AgentConfig) -> None:
         "agc_enabled": config.agc_enabled,
     }
     try:
+        os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
         with open(CONFIG_PATH, "w") as f:
             json.dump(data, f, indent=2)
         print(f"💾 设备选择已保存: {CONFIG_PATH}", flush=True)

@@ -232,34 +232,46 @@ def _camera_valid(cam_id: int) -> bool:
 
 
 def apply_device_config(config: AgentConfig, args: argparse.Namespace) -> None:
-    """Apply device config: explicit args > saved config > defaults."""
+    """Apply device config: explicit args > saved config > first-run wizard."""
     if args.reset_devices:
         reset_config()
 
     explicit = (args.mic is not None or args.spk is not None
                 or args.camera is not None or args.agc)
+    saved = load_config()
 
-    if args.select_devices:
-        # Interactive menus, then save for next launch
+    # Interactive menu when forced (--select-devices) or on first run
+    # (no saved config and no explicit args — the user has nothing to reuse).
+    first_run = not explicit and not args.select_devices and not saved
+    if args.select_devices or first_run:
+        if first_run:
+            print("\n✨ 首次运行：请选择设备（全部回车 = 使用默认，选择会自动记住；"
+                  "以后可用 --select-devices 重选）", flush=True)
         mics, spks, cams = list_devices()
         print("\n—— 手动选择设备（直接回车 = 跳过该项）——", flush=True)
+        mic_v = spk_v = cam_v = None
         if mics:
-            v = select_menu("🎤 麦克风：", mics)
-            if v is not None:
-                config.mic_device_index = v
+            mic_v = select_menu("🎤 麦克风：", mics)
+            if mic_v is not None:
+                config.mic_device_index = mic_v
         if spks:
-            v = select_menu("🔊 扬声器：", spks)
-            if v is not None:
-                config.spk_device_index = v
+            spk_v = select_menu("🔊 扬声器：", spks)
+            if spk_v is not None:
+                config.spk_device_index = spk_v
         if cams:
-            v = select_menu("📷 摄像头：", cams)
-            if v is not None:
-                config.camera_id = v
+            cam_v = select_menu("📷 摄像头：", cams)
+            if cam_v is not None:
+                config.camera_id = cam_v
         config.agc_enabled = bool(args.agc)
         print(f"\n📋 本次选择 → 麦克风: {config.mic_device_index}  "
               f"扬声器: {config.spk_device_index}  "
               f"摄像头: {config.camera_id}  AGC: {config.agc_enabled}", flush=True)
-        save_config(config)
+        if mic_v is None and spk_v is None and cam_v is None and not config.agc_enabled:
+            # Nothing chosen: don't persist an empty config — stay on defaults
+            reset_config()
+            print("（未选择任何设备，使用默认配置）", flush=True)
+        else:
+            save_config(config)
         return
 
     if explicit:
@@ -273,11 +285,7 @@ def apply_device_config(config: AgentConfig, args: argparse.Namespace) -> None:
         config.agc_enabled = bool(args.agc)
         return
 
-    # No explicit args: reuse last saved selection (if still valid)
-    saved = load_config()
-    if not saved:
-        return  # defaults = mac original behaviour
-
+    # No explicit args and no first run: reuse last saved selection
     mic = saved.get("mic_device_index")
     spk = saved.get("spk_device_index")
     cam = saved.get("camera_id")

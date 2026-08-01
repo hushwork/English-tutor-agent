@@ -68,6 +68,8 @@ python3 -c "import os; os.system('afplay /System/Library/Sounds/Ping.aiff')"
 # 音箱 (Linux): speaker-test -t sine -f 440 -l 1
 ```
 
+> **多设备 / 设备被占用？** 用 `--select-devices` 启动时菜单式选择麦克风、扬声器、摄像头，选择会自动保存复用。详见 README「[设备选择（麦克风 / 扬声器 / 摄像头）](#设备选择麦克风--扬声器--摄像头)」小节。
+
 三条都绿 → 进入下一步。
 
 ### A.4 申请 API Key（免费）

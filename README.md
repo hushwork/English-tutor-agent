@@ -512,6 +512,32 @@ python3 camera_tutor/dashboard_server.py
 # http://localhost:8200/static/emma_face.html
 ```
 
+### 设备选择（麦克风 / 扬声器 / 摄像头）
+
+多设备场景（USB 音箱、多摄像头、或某设备被其他程序占用）下，推荐**首次手动选择一次**，之后自动记住上次选择：
+
+```bash
+# 交互式菜单选择设备（列出现有设备及编号，选完自动保存）
+python3 camera_tutor/realtime_demo.py --select-devices
+
+# 直接指定设备编号（临时覆盖，不修改已保存配置）
+python3 camera_tutor/realtime_demo.py --mic 7 --spk 7 --camera 0
+
+# 开启麦克风 AGC 自动增益（安静环境自动放大、嘈杂自动衰减）
+python3 camera_tutor/realtime_demo.py --select-devices --agc
+
+# 清除已保存的设备配置，恢复默认
+python3 camera_tutor/realtime_demo.py --reset-devices
+```
+
+优先级：**命令行参数 > 上次保存的配置 > 默认**。设备选择保存在 `.camera-tutor-data/devices.json`（已被 .gitignore 忽略，不进仓库）。
+
+> **注意事项**：
+> - 设备编号每次插拔后可能变化，用 `--select-devices` 查看当前列表最可靠
+> - USB 音频设备（如 Poly Sync 20）**只能被一个进程独占**：想查看/重选设备前，先停掉正在运行的应用实例
+> - 指定扬声器设备时自动以 **48kHz + 重采样** 播放（部分 USB 音箱拒绝 24kHz）
+> - 摄像头列表会标注节点类型：`画面流` 可用；`元数据流(非画面)` 是辅助节点（如 Brio 90 的 `/dev/video1`），请选择画面流
+
 ### 核心模块
 
 | 模块 | 功能 |

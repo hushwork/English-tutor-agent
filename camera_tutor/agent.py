@@ -70,6 +70,8 @@ class AgentConfig:
     # Audio
     mic_gain: float = 1.0         # Linear — leave at 1.0 unless diagnostic says otherwise
     mic_device_index: int | None = None  # Force a specific mic, or None for auto-detect
+    spk_device_index: int | None = None  # Force a specific speaker, or None for system default
+    agc_enabled: bool = False     # Opt-in digital AGC on the mic path
     server_vad_threshold: float = 0.5   # Server VAD sensitivity (lower = more sensitive)
     tts_speed: float = 1.0        # Speech rate: 0.25-4.0 (1.0 = normal)
 
@@ -194,6 +196,8 @@ class CameraTutorAgent:
         self.audio = AudioManager(
             mic_gain=self.config.mic_gain,
             mic_device_index=self.config.mic_device_index,
+            spk_device_index=self.config.spk_device_index,
+            agc_enabled=self.config.agc_enabled,
         )
 
         # Face sync (dashboard connection)

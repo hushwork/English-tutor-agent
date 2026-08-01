@@ -58,12 +58,24 @@ class AudioManager:
         self,
         mic_gain: float = DEFAULT_MIC_GAIN,
         mic_device_index: Optional[int] = None,
+        spk_device_index: Optional[int] = None,
+        agc_enabled: bool = False,
     ):
         self._mic_stream: Optional[sd.InputStream] = None
         self._spk_stream: Optional[sd.OutputStream] = None
         self._started = False
         self._mic_index: Optional[int] = mic_device_index
         self._mic_gain = mic_gain
+        # Optional explicit speaker device (None = system default, mac behaviour)
+        self._spk_device_index: Optional[int] = spk_device_index
+        # When a speaker device is forced we open it at 48kHz and upsample
+        # (some USB speakers, e.g. Poly Sync 20, refuse the server's 24kHz).
+        self._spk_ratio: float = 1.0
+        # Optional AGC (default off = original behaviour)
+        self._agc_enabled = agc_enabled
+        self._agc_target = 0.08        # target RMS ≈ -22 dBFS
+        self._agc_max_gain = 12.0      # gain cap
+        self._agc_gain = 1.0
 
         # Mic: callback → ring → read_mic()
         self._mic_ring: deque[bytes] = deque()
@@ -170,9 +182,14 @@ class AudioManager:
             blocksize=MIC_CALLBACK_FRAMES, device=self._mic_index,
             callback=self._mic_callback,
         )
+        if self._spk_device_index is not None:
+            spk_sr = 48000
+            self._spk_ratio = spk_sr / RATE_SPK
+        else:
+            spk_sr = RATE_SPK
         self._spk_stream = sd.OutputStream(
-            samplerate=RATE_SPK, channels=1, dtype="int16",
-            blocksize=SPK_CALLBACK_FRAMES,
+            samplerate=spk_sr, channels=1, dtype="int16",
+            blocksize=SPK_CALLBACK_FRAMES, device=self._spk_device_index,
             callback=self._spk_callback,
         )
         self._mic_stream.start()
@@ -201,7 +218,19 @@ class AudioManager:
 
     def _mic_callback(self, indata: np.ndarray, frames: int,
                       time_info, status) -> None:
-        raw = indata.tobytes()
+        if self._agc_enabled:
+            # Digital AGC (opt-in): push short-term RMS toward a target level.
+            x = indata[:, 0].astype(np.float32) / 32768.0
+            rms = float(np.sqrt(np.mean(x * x) + 1e-12))
+            desired = self._agc_target / (rms + 1e-6)
+            desired = min(max(desired, 0.25), self._agc_max_gain)
+            alpha = 0.2 if desired > self._agc_gain else 0.01
+            self._agc_gain += alpha * (desired - self._agc_gain)
+            x *= self._agc_gain
+            np.clip(x, -1.0, 1.0, out=x)
+            raw = (x * 32767.0).astype(np.int16).tobytes()
+        else:
+            raw = indata.tobytes()
         with self._mic_lock:
             if len(self._mic_ring) >= self._mic_ring_maxlen:
                 self._mic_ring_overflow += 1
@@ -213,7 +242,7 @@ class AudioManager:
     def _spk_callback(self, outdata: np.ndarray, frames: int,
                       time_info, status) -> None:
         """Pull audio from spk ring, fill outdata. Queue visemes."""
-        needed = frames * 2  # int16 = 2 bytes/sample
+        needed = int(frames / self._spk_ratio) * 2  # 24kHz int16 bytes
         viseme_batch: list[dict] = []
 
         with self._spk_lock:
@@ -231,16 +260,31 @@ class AudioManager:
                 buf = b"".join(audio_parts)
 
                 if len(buf) >= needed:
-                    outdata[:] = np.frombuffer(buf[:needed], dtype=np.int16).reshape((frames, 1))
+                    if self._spk_ratio == 1.0:
+                        outdata[:] = np.frombuffer(buf[:needed], dtype=np.int16).reshape((frames, 1))
+                    else:
+                        x = np.frombuffer(buf[:needed], dtype=np.int16).astype(np.float32)
+                        outdata[:] = np.interp(
+                            np.linspace(0, len(x) - 1, frames),
+                            np.arange(len(x)), x,
+                        ).astype(np.int16).reshape((frames, 1))
                     leftover = buf[needed:]
                     if leftover:
                         # Push leftover back — visemes already consumed
                         self._spk_ring.appendleft((leftover, None))
                 else:
                     outdata.fill(0)
-                    out_flat = outdata.ravel()
-                    arr = np.frombuffer(buf, dtype=np.int16)
-                    out_flat[:len(arr)] = arr
+                    if buf:
+                        if self._spk_ratio == 1.0:
+                            out_flat = outdata.ravel()
+                            arr = np.frombuffer(buf, dtype=np.int16)
+                            out_flat[:len(arr)] = arr
+                        else:
+                            x = np.frombuffer(buf, dtype=np.int16).astype(np.float32)
+                            outdata[:] = np.interp(
+                                np.linspace(0, len(x) - 1, frames),
+                                np.arange(len(x)), x,
+                            ).astype(np.int16).reshape((frames, 1))
                     self._spk_ring_underflow += 1
             else:
                 outdata.fill(0)

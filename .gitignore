@@ -17,3 +17,7 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+# Runtime data & local venv
+.venv/
+.camera-tutor-data/

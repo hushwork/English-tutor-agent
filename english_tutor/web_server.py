@@ -123,8 +123,7 @@ async def startup():
         load_dotenv(env_path)
         api_key = os.environ.get("DEEPSEEK_API_KEY", "")
     if not api_key:
-        print("ERROR: DEEPSEEK_API_KEY not set")
-        sys.exit(1)
+        print("WARNING: DEEPSEEK_API_KEY not set — 使用本地 Ollama 模式 (LLM_BASE_URL)")
 
     client = LLMClient(api_key=api_key)
     um = UserManager()

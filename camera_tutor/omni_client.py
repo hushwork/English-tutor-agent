@@ -71,7 +71,10 @@ class OmniClient:
         cloud_model: str = "qwen-omni-turbo",
         local_model: str = "qwen2.5-omni-7b",
         timeout: float = 30.0,
+        supports_audio: bool = True,
     ):
+        """supports_audio=False 时（本地 Ollama/llama.cpp），请求不带
+        modalities/audio 字段 —— 音频输出由独立 TTS 组件负责。"""
         self.mode = mode
 
         # Local config
@@ -97,6 +100,7 @@ class OmniClient:
 
         self.local_model = local_model
         self.timeout = timeout
+        self.supports_audio = supports_audio
 
         # Lazy HTTP clients
         self._local_client: Optional[httpx.AsyncClient] = None
@@ -283,15 +287,16 @@ class OmniClient:
         #     })
         content_parts.append({"type": "text", "text": text})
 
-        payload = {
+        payload: dict = {
             "model": self.cloud_model,
             "messages": [{"role": "user", "content": content_parts}],
             "max_tokens": 200,
-            "modalities": ["text", "audio"],
-            "audio": {"voice": "Cherry", "format": "wav"},
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        if self.supports_audio:
+            payload["modalities"] = ["text", "audio"]
+            payload["audio"] = {"voice": "Cherry", "format": "wav"}
 
         try:
             async with self._cloud_client.stream(
@@ -545,11 +550,12 @@ class OmniClient:
                 ]
             }],
             "max_tokens": 300,
-            "modalities": ["text", "audio"],
-            "audio": {"voice": "Cherry", "format": "wav"},
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        if self.supports_audio:
+            payload["modalities"] = ["text", "audio"]
+            payload["audio"] = {"voice": "Cherry", "format": "wav"}
 
         text = ""
         async with self._cloud_client.stream("POST", "/chat/completions", json=payload) as resp:

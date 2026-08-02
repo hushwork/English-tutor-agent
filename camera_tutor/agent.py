@@ -71,7 +71,7 @@ class AgentConfig:
     mic_gain: float = 1.0         # Linear — leave at 1.0 unless diagnostic says otherwise
     mic_device_index: int | None = None  # Force a specific mic, or None for auto-detect
     spk_device_index: int | None = None  # Force a specific speaker, or None for system default
-    agc_enabled: bool = False     # Opt-in digital AGC on the mic path
+    agc_enabled: bool = True     # Digital AGC on the mic path
     server_vad_threshold: float = 0.5   # Server VAD sensitivity (lower = more sensitive)
     tts_speed: float = 1.0        # Speech rate: 0.25-4.0 (1.0 = normal)
 
@@ -99,6 +99,12 @@ class AgentConfig:
 
     @property
     def ws_url(self) -> str:
+        """WebSocket URL。本地模式（OMNI_WS_URL 已设置）→ 本地 speech-to-speech
+        （OpenAI Realtime 兼容，ws://localhost:8765/v1/realtime）；
+        否则 → 阿里 MaaS 云端实时接口。"""
+        override = os.environ.get("OMNI_WS_URL", "")
+        if override:
+            return override
         return (
             f"wss://{self.workspace_id}.cn-beijing.maas.aliyuncs.com"
             f"/api-ws/v1/realtime?model={self.model}&language=en"
@@ -267,11 +273,12 @@ class CameraTutorAgent:
         ws_url = self.config.ws_url
         api_key = self.config.api_key
 
-        if not api_key:
+        local_mode = bool(os.environ.get("OMNI_WS_URL", ""))
+        if not api_key and not local_mode:
             logger.error("DASHSCOPE_API_KEY not set — set it in .env or pass to AgentConfig")
             sys.exit(1)
 
-        if not self.config.workspace_id:
+        if not self.config.workspace_id and not local_mode:
             logger.error(
                 "WORKSPACE_ID is empty — cannot construct WS URL. "
                 "Set WORKSPACE_ID in .env or pass workspace_id to AgentConfig."
@@ -358,24 +365,19 @@ class CameraTutorAgent:
         """Handle WebSocket open — configure session and start threads."""
         logger.info("WebSocket opened, configuring session...")
 
-        # Configure session
+        # Configure session（本地 s2s 只需基础字段：voice/speed/transcription/silence 会报错）
         ws.send(json.dumps({
-            "event_id": "session_init",
             "type": "session.update",
             "session": {
+                "type": "realtime",
                 "modalities": ["text", "audio"],
-                "voice": self.tutor.voice,
-                "speed": self.tutor.speed,
                 "instructions": self._build_instructions(),
+                "audio": {"output": {"voice": "af_heart"}},
                 "input_audio_format": "pcm",
                 "output_audio_format": "pcm",
-                "input_audio_transcription": {
-                    "language": "en",
-                },
                 "turn_detection": {
                     "type": "server_vad",
                     "threshold": self.config.server_vad_threshold,
-                    "silence_duration_ms": 800,
                 },
             },
         }))
@@ -420,7 +422,7 @@ class CameraTutorAgent:
         if event_type not in ("response.audio.delta", "input_audio_buffer.speech_started"):
             logger.debug("[event] %s", event_type)
 
-        if event_type == "session.updated":
+        if event_type == "session.updated" or event_type == "session.created":
             self.state.session_ready.set()
             if not getattr(self, "_link_printed", False):
                 self._link_printed = True

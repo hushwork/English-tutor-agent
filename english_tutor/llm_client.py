@@ -26,19 +26,15 @@ class LLMClient:
         timeout: float = 60.0,
     ):
         self.api_key = api_key or os.environ.get("DEEPSEEK_API_KEY", "")
-        if not self.api_key:
-            raise ValueError(
-                "DEEPSEEK_API_KEY not set. "
-                "Create a .env file or export the environment variable."
-            )
         self.base_url = (base_url or os.environ.get("LLM_BASE_URL")) or DEFAULT_BASE_URL
         self.model = (model or os.environ.get("LLM_MODEL")) or DEFAULT_MODEL
+        # 无 api_key（本地 Ollama/llama.cpp）时不带 Authorization header
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
         self._client = httpx.AsyncClient(
             base_url=self.base_url.rstrip("/"),
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
+            headers=headers,
             timeout=httpx.Timeout(timeout),
         )
 

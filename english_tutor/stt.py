@@ -71,7 +71,7 @@ def record_audio(
 _whisper_model = None
 
 
-def _get_model(model_size: str = "tiny") -> "WhisperModel":
+def _get_model(model_size: str = "small") -> "WhisperModel":
     """Get or create the Whisper model singleton."""
     global _whisper_model
     if _whisper_model is None:
@@ -91,7 +91,7 @@ def _get_model(model_size: str = "tiny") -> "WhisperModel":
 def transcribe(
     audio_path: str,
     language: str = "en",
-    model_size: str = "tiny",
+    model_size: str = "small",
 ) -> str:
     """Transcribe an audio file to text using faster-whisper.
 
@@ -128,7 +128,7 @@ def transcribe(
 def record_and_transcribe(
     duration: int = DEFAULT_DURATION,
     language: str = "en",
-    model_size: str = "tiny",
+    model_size: str = "small",
 ) -> str:
     """Record voice from microphone and transcribe it.
 

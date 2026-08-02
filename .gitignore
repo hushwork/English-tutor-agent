@@ -21,3 +21,9 @@ Thumbs.db
 # Runtime data & local venv
 .venv/
 .camera-tutor-data/
+.env.bak-20260802
+logs/
+scripts/voice_bridge.py
+scripts/gemma_proxy.py
+scripts/response_proxy.py
+scripts/pull-loop.sh

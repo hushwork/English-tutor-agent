@@ -138,7 +138,7 @@ class RealtimeConnection:
         """Create a WebSocketApp and run it (blocks until disconnect)."""
         ws = self._ws_mod.WebSocketApp(
             self.url,
-            header=[f"Authorization: Bearer {self.api_key}"],
+            header=self._auth_header(),
             on_open=self._wrap_on_open(),
             on_message=self._wrap_on_message(),
             on_error=self._wrap_on_error(),
@@ -150,6 +150,12 @@ class RealtimeConnection:
 
         # Blocks until connection closes or stop() is called
         ws.run_forever(ping_interval=self.config.ping_interval)
+
+    def _auth_header(self) -> list[str]:
+        """构造 Authorization header；本地服务（无 api_key）时不带。"""
+        if self.api_key:
+            return [f"Authorization: Bearer {self.api_key}"]
+        return []
 
     def _backoff_delay(self) -> float:
         """Compute exponential backoff with jitter."""

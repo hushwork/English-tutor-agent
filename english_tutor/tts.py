@@ -77,6 +77,26 @@ async def _speak_edge(
     return output_path if os.path.getsize(output_path) > 0 else None
 
 
+# ── Kokoro voices ──────────────────────────────────────────────────
+
+KOKORO_VOICES = {
+    "en-us-female": "af_heart",       # American female, warm
+    "en-us-male": "am_adam",          # American male
+    "en-gb-female": "bf_emma",        # British female
+    "en-gb-male": "bm_george",        # British male
+}
+DEFAULT_KOKORO_VOICE = "af_heart"
+
+# Edge-tts → Kokoro voice mapping for seamless switching
+_EDGE_TO_KOKORO = {
+    "en-US-JennyNeural": "af_heart",
+    "en-US-GuyNeural": "am_adam",
+    "en-GB-SoniaNeural": "bf_emma",
+    "en-GB-RyanNeural": "bm_george",
+    "en-AU-NatashaNeural": "af_heart",
+}
+
+
 # ── Public API ──────────────────────────────────────────────────────
 
 def speak_now(text: str, rate: int = 0) -> bool:
@@ -100,16 +120,22 @@ async def speak_to_file(
     voice: str = DEFAULT_EDGE_VOICE,
     output_path: str | None = None,
 ) -> str | None:
-    """Generate high-quality speech using edge-tts and save to file.
+    """Generate high-quality speech and save to file.
+
+    Uses local Kokoro TTS by default (offline). Set USE_CLOUD_TTS=1 for
+    edge-tts (Microsoft neural voices, requires network).
 
     Args:
         text: Text to synthesize.
-        voice: Edge TTS voice name.
-        output_path: Optional path to save MP3. If None, uses temp file.
+        voice: Voice name (edge-tts voice for cloud, kokoro voice for local).
+        output_path: Optional path to save audio. If None, uses temp file.
 
     Returns:
-        Path to MP3 file, or None if failed.
+        Path to audio file, or None if failed.
     """
+    if _use_local_tts():
+        kokoro_voice = _EDGE_TO_KOKORO.get(voice, DEFAULT_KOKORO_VOICE)
+        return await _speak_kokoro(text, kokoro_voice, output_path)
     return await _speak_edge(text, voice, output_path)
 
 
@@ -132,3 +158,70 @@ def is_edge_tts_available() -> bool:
         return True
     except ImportError:
         return False
+
+
+# ── Kokoro TTS (local, offline, high-quality English) ──────────────
+
+_kokoro_pipeline = None
+
+
+def _get_kokoro():
+    """Get or create the Kokoro pipeline singleton (CPU)."""
+    global _kokoro_pipeline
+    if _kokoro_pipeline is None:
+        from kokoro import KPipeline
+        _kokoro_pipeline = KPipeline(lang_code="a")  # American English
+    return _kokoro_pipeline
+
+
+async def _speak_kokoro(
+    text: str,
+    voice: str = "af_heart",
+    output_path: str | None = None,
+) -> str | None:
+    """Generate speech with local Kokoro TTS to a WAV file.
+
+    Returns the file path, or None on failure.
+    """
+    import numpy as np
+    import soundfile as sf
+
+    try:
+        pipeline = _get_kokoro()
+    except Exception:
+        return None
+
+    if not output_path:
+        fd, output_path = tempfile.mkstemp(suffix=".wav", prefix="kokoro_")
+        os.close(fd)
+
+    try:
+        chunks = []
+        for _gs, _ps, audio in pipeline(text, voice=voice):
+            chunks.append(audio)
+        if not chunks:
+            return None
+        combined = np.concatenate(chunks)
+        sf.write(output_path, combined, 24000)
+        return output_path if os.path.getsize(output_path) > 0 else None
+    except Exception:
+        return None
+
+
+def is_kokoro_available() -> bool:
+    """Check if kokoro is installed."""
+    try:
+        import kokoro  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+# ── TTS mode selection ─────────────────────────────────────────────
+
+def _use_local_tts() -> bool:
+    """Return True if local TTS should be used instead of cloud."""
+    return (
+        os.environ.get("USE_CLOUD_TTS", "").lower() not in ("1", "true", "yes")
+        and is_kokoro_available()
+    )

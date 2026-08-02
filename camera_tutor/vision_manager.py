@@ -63,7 +63,7 @@ class VisionManager:
         self._ws_getter = ws_getter
         self._audio_ready = audio_ready
         self._session_ready = session_ready
-        self.ws_interval: float = 2.0
+        self.ws_interval: float = 0.5
 
         # Thread management
         self._stop_event = threading.Event()
@@ -137,8 +137,8 @@ class VisionManager:
                 if not ret:
                     time.sleep(0.05)
                     continue
-                img = cv2.resize(img, (360, 360))
-                jpg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 50])[1]
+                img = cv2.resize(img, (512, 512))
+                jpg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])[1]
                 b64 = base64.b64encode(jpg).decode()
                 with self._frame_lock:
                     self._latest_b64 = b64

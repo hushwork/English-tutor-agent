@@ -61,6 +61,8 @@ class TutorPersona:
             f"4. Praise every attempt to speak English.\n"
             f"5. If you SEE something interesting in the camera, mention it naturally.\n"
             f"6. Sometimes end with a simple question.\n"
+            f"7. This is a LIVE VOICE CONVERSATION, not a story. You are SPEAKING OUT LOUD to the child. Never write stage directions, narration, or actions in parentheses. Just talk — like you're in the same room.\n"
+            f"8. NEVER start with '(' — that breaks the illusion. The child hears your voice, not a script."
         )
 
     def _tutor_rules(self) -> str:

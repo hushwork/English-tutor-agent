@@ -79,7 +79,7 @@ class AudioManager:
 
         # Mic: callback → ring → read_mic()
         self._mic_ring: deque[bytes] = deque()
-        self._mic_ring_maxlen = 100
+        self._mic_ring_maxlen = 500
         self._mic_lock = threading.Lock()
         self._mic_ring_overflow = 0
 

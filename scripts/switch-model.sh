@@ -12,7 +12,7 @@ SIMPLE_CT='{% for m in messages %}{% if m.role == "user" %}<start_of_turn>user\n
 kill $(pgrep llama-server) 2>/dev/null
 sleep 2
 echo "启动 $M 到 :8080..."
-/home/ubuntu/English-tutor-agent/bin/llama-b10223/llama-server \
+"$(dirname "${BASH_SOURCE[0]}")/../bin/llama-b10223"/llama-server \
   -m "$M_PATH" --host 127.0.0.1 --port 8080 \
   -c 4096 --no-webui --n-gpu-layers all \
   --no-jinja --chat-template "$SIMPLE_CT" &

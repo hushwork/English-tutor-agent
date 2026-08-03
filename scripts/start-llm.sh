@@ -1,7 +1,7 @@
 #!/bin/bash
 # 一键启动全链路（重启安全，所有文件在项目目录内）
 set -e
-cd /home/ubuntu/English-tutor-agent
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 mkdir -p logs
 
 LLAMA=bin/llama-b10223/llama-server

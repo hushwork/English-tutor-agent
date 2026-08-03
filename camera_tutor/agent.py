@@ -63,7 +63,7 @@ class AgentConfig:
     camera_enabled: bool = True
     camera_id: int = 0
     camera_fps: int = 5
-    camera_resolution: tuple[int, int] = (360, 360)
+    camera_resolution: tuple[int, int] = (1280, 720)
     camera_scene_threshold: float = 0.15
     camera_key_interval: float = 1.0
 
@@ -231,8 +231,14 @@ class CameraTutorAgent:
         logger.info("Agent setup complete")
 
     def _setup_camera(self) -> None:
-        """Try to initialise the camera pipeline."""
-        for cam_id in [1, 0, 2]:
+        """Try to initialise the camera pipeline.
+
+        The configured camera_id (from --camera or saved device config) is
+        tried first; the rest of 0/1/2 are fallbacks.
+        """
+        preferred = self.config.camera_id
+        candidates = [preferred] + [i for i in (0, 1, 2) if i != preferred]
+        for cam_id in candidates:
             try:
                 cam = CameraPipeline(
                     camera_id=cam_id,
@@ -402,8 +408,11 @@ class CameraTutorAgent:
         if self.vision:
             self.vision.stop()
         if self.camera:
+            # audio_ready=None: 本地 local_pipe 没有 Omni 云端那种
+            # "append image before append audio" 的顺序要求，不需要等
+            # 麦克风首发再推图，避免预览线程被无谓阻塞。
             self.vision = VisionManager(camera=self.camera, ws_getter=lambda: ws,
-                                         audio_ready=self.state.audio_started,
+                                         audio_ready=None,
                                          session_ready=self.state.session_ready)
             self.vision.start()
 

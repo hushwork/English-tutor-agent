@@ -18,7 +18,7 @@ echo "Gemma 4 E2B 启动中..."
 echo "  模型: $GGUF"
 echo "  视觉: $MMPROJ"
 
-exec /home/ubuntu/English-tutor-agent/bin/llama-b10223/llama-server \
+exec "$(dirname "${BASH_SOURCE[0]}")/../bin/llama-b10223"/llama-server \
   -m "$GGUF" \
   ${MMPROJ:+--mmproj "$MMPROJ"} \
   --host 127.0.0.1 --port 8081 \

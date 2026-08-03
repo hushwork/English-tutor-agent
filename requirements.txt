@@ -13,7 +13,27 @@ opencv-python>=4.8.0
 sounddevice>=0.4.0
 numpy>=1.24.0
 
+# Local TTS (default backend in english_tutor/tts.py and scripts/local_pipe.py)
+# Requires the espeak-ng system binary for English phonemization.
+kokoro>=0.9.2
+misaki[en]>=0.9.4
+soundfile>=0.12.0
+
+# WebSocket: realtime connection (camera_tutor/connection.py, face_sync.py)
+# and the local speech-to-speech pipe (scripts/local_pipe.py)
+websocket-client>=1.7.0
+websockets>=12.0
+huggingface-hub>=0.24.0
+
 # Optional: face recognition (requires dlib)
 # face-recognition>=1.4.0
 # Optional: MediaPipe for gesture tracking (Pro version)
 # mediapipe>=0.10.0
+# Optional: legacy PyAudio path (camera_tutor/audio_io.py, demo.py)
+# requires the portaudio system library
+# pyaudio>=0.2.14
+# Optional: legacy VAD backends for camera_tutor/audio_io.py
+# torch>=2.0.0
+# webrtcvad>=2.0.10
+# Optional: model conversion tooling (tools/convert_hf_to_gguf.py)
+# torch>=2.0.0

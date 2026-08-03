@@ -137,7 +137,11 @@ class VisionManager:
                 if not ret:
                     time.sleep(0.05)
                     continue
-                img = cv2.resize(img, (512, 512))
+                # 等比缩放到长边 768：保留细节给 VLM，不压扁宽高比
+                h, w = img.shape[:2]
+                scale = 768.0 / max(h, w)
+                if scale < 1.0:
+                    img = cv2.resize(img, (int(w * scale), int(h * scale)))
                 jpg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])[1]
                 b64 = base64.b64encode(jpg).decode()
                 with self._frame_lock:
@@ -163,6 +167,7 @@ class VisionManager:
             self._session_ready.wait()
         if self._audio_ready is not None:
             self._audio_ready.wait()
+        logger.info("Preview gate passed — pushing frames (WS every %.1fs)", self.ws_interval)
         while not self._stop_event.is_set():
             try:
                 b64 = self._latest_frame()

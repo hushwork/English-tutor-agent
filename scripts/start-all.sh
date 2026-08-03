@@ -1,0 +1,80 @@
+#!/bin/bash
+# 一键启动/停止 Camera Tutor 全链路（重启安全）
+# 用法: scripts/start-all.sh [start|stop|status]
+set -u
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+PY=/home/ubuntu/camera-tutor-env/bin/python
+LLAMA=bin/llama-b10223/llama-server
+MODELS=/home/ubuntu/models
+LOGS=logs
+mkdir -p "$LOGS"
+
+# Gemma chat template（与 scripts/start-llm.sh 一致）
+CT='{% for m in messages %}{% if m.role == "user" %}<start_of_turn>user\n{{ m.content }}<end_of_turn>\n{% elif m.role == "assistant" %}<start_of_turn>model\n{{ m.content }}<end_of_turn>\n{% elif m.role == "system" %}<start_of_turn>user\n{{ m.content }}<end_of_turn>\n{% endif %}{% endfor %}<start_of_turn>model\n'
+
+wait_port() {  # wait_port <port> <name>
+  for _ in $(seq 1 30); do
+    ss -tln | grep -q ":$1 " && { echo "✅ $2 :$1"; return 0; }
+    sleep 2
+  done
+  echo "⚠️  $2 :$1 启动超时，查看 $LOGS/"
+  return 1
+}
+
+start() {
+  # 1) llama-server: Gemma-4-E4B + mmproj 视觉（CPU 推理；GPU 空闲时可加 --n-gpu-layers all）
+  if ! ss -tln | grep -q ':8080 '; then
+    nohup $LLAMA -m $MODELS/gemma4-e4b/gemma-4-E4B-it-Q4_K_M.gguf \
+      --mmproj $MODELS/gemma4-e4b/mmproj-BF16.gguf \
+      --host 127.0.0.1 --port 8080 -c 8192 -t 12 --no-webui \
+      --no-jinja --chat-template "$CT" > $LOGS/llama.log 2>&1 &
+  fi
+  wait_port 8080 llama-server || return 1
+
+  # 2) 家长仪表盘（独立进程，不随 demo 重启而死）
+  if ! ss -tln | grep -q ':8200 '; then
+    nohup $PY -m uvicorn camera_tutor.dashboard_server:app \
+      --host 0.0.0.0 --port 8200 --log-level warning > $LOGS/dashboard.log 2>&1 &
+  fi
+  wait_port 8200 dashboard || return 1
+
+  # 3) 本地语音管道（whisper STT → LLM → Kokoro TTS）
+  if ! ss -tln | grep -q ':8765 '; then
+    nohup $PY scripts/local_pipe.py > $LOGS/local_pipe.log 2>&1 &
+  fi
+  wait_port 8765 local_pipe || return 1
+
+  # 4) 主程序（设备选择自动从 .camera-tutor-data/devices.json 按名字恢复）
+  if ! pgrep -f 'camera_tutor/realtime_demo.py' > /dev/null; then
+    nohup $PY camera_tutor/realtime_demo.py > $LOGS/realtime_demo.log 2>&1 &
+    sleep 10
+  fi
+  echo "✅ realtime_demo 已启动"
+  echo "   Emma 形象: http://$(hostname -I | awk '{print $1}'):8200/static/face_preview.html"
+}
+
+stop() {
+  pkill -f 'camera_tutor/realtime_demo.py' 2>/dev/null
+  PID=$(ss -tlnp 2>/dev/null | grep ':8765 ' | grep -oE 'pid=[0-9]+' | cut -d= -f2 | head -1)
+  [ -n "$PID" ] && kill "$PID" 2>/dev/null
+  PID=$(ss -tlnp 2>/dev/null | grep ':8200 ' | grep -oE 'pid=[0-9]+' | cut -d= -f2 | head -1)
+  [ -n "$PID" ] && kill "$PID" 2>/dev/null
+  pkill -x llama-server 2>/dev/null
+  sleep 2
+  echo "🛑 已全部停止"
+}
+
+status() {
+  ss -tln | grep -q ':8080 ' && echo "✅ llama-server :8080" || echo "❌ llama-server"
+  ss -tln | grep -q ':8200 ' && echo "✅ dashboard    :8200" || echo "❌ dashboard"
+  ss -tln | grep -q ':8765 ' && echo "✅ local_pipe   :8765" || echo "❌ local_pipe"
+  pgrep -f 'camera_tutor/realtime_demo.py' > /dev/null && echo "✅ realtime_demo" || echo "❌ realtime_demo"
+}
+
+case "${1:-start}" in
+  start)  start ;;
+  stop)   stop ;;
+  status) status ;;
+  *) echo "用法: $0 [start|stop|status]"; exit 1 ;;
+esac

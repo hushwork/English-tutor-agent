@@ -179,11 +179,28 @@ _migrate_legacy_config()
 
 
 def save_config(config: AgentConfig) -> None:
-    """Persist the current device selection for the next launch."""
+    """Persist the current device selection for the next launch.
+
+    Saves device NAME alongside the index: PipeWire/ALSA indices can
+    shift after replug or re-enumeration, so name is the stable key.
+    """
+    import sounddevice as sd
+
+    def _sd_name(idx):
+        if idx is None:
+            return None
+        try:
+            return sd.query_devices(idx)["name"]
+        except Exception:
+            return None
+
     data = {
         "mic_device_index": config.mic_device_index,
+        "mic_device_name": _sd_name(config.mic_device_index),
         "spk_device_index": config.spk_device_index,
+        "spk_device_name": _sd_name(config.spk_device_index),
         "camera_id": config.camera_id,
+        "camera_name": _camera_name(config.camera_id) if config.camera_id is not None else None,
         "agc_enabled": config.agc_enabled,
     }
     try:
@@ -203,7 +220,9 @@ def load_config() -> dict:
         if not isinstance(data, dict):
             return {}
         return {k: data.get(k) for k in
-                ("mic_device_index", "spk_device_index", "camera_id", "agc_enabled")}
+                ("mic_device_index", "mic_device_name",
+                 "spk_device_index", "spk_device_name",
+                 "camera_id", "camera_name", "agc_enabled")}
     except (OSError, ValueError):
         return {}
 
@@ -214,6 +233,18 @@ def reset_config() -> None:
         print("🗑️  已清除保存的设备配置", flush=True)
     except FileNotFoundError:
         print("（没有已保存的配置）", flush=True)
+
+
+def _find_device_by_name(name: str, want_input: bool) -> int | None:
+    """Find the CURRENT sounddevice index for a saved device name."""
+    import sounddevice as sd
+    for i, d in enumerate(sd.query_devices()):
+        if d["name"] != name:
+            continue
+        channels = d["max_input_channels"] if want_input else d["max_output_channels"]
+        if channels > 0:
+            return i
+    return None
 
 
 def _device_valid(dev_id: int, want_input: bool) -> bool:
@@ -285,19 +316,48 @@ def apply_device_config(config: AgentConfig, args: argparse.Namespace) -> None:
         config.agc_enabled = bool(args.agc)
         return
 
-    # No explicit args and no first run: reuse last saved selection
-    mic = saved.get("mic_device_index")
-    spk = saved.get("spk_device_index")
-    cam = saved.get("camera_id")
-    agc = saved.get("agc_enabled")
+    # No explicit args and no first run: reuse last saved selection.
+    # Resolve by device NAME first (indices shift after re-enumeration);
+    # fall back to the saved index only when no name was recorded.
+    mic_name = saved.get("mic_device_name")
+    spk_name = saved.get("spk_device_name")
+    cam_name = saved.get("camera_name")
 
-    if mic is not None and _device_valid(mic, want_input=True):
-        config.mic_device_index = mic
-    if spk is not None and _device_valid(spk, want_input=False):
-        config.spk_device_index = spk
-    if cam is not None and _camera_valid(cam):
-        config.camera_id = cam
-    if agc:
+    if mic_name:
+        idx = _find_device_by_name(mic_name, want_input=True)
+        if idx is not None:
+            config.mic_device_index = idx
+        else:
+            print(f"⚠️  保存的麦克风 '{mic_name}' 当前未找到，使用系统默认", flush=True)
+    else:
+        mic = saved.get("mic_device_index")
+        if mic is not None and _device_valid(mic, want_input=True):
+            config.mic_device_index = mic
+
+    if spk_name:
+        idx = _find_device_by_name(spk_name, want_input=False)
+        if idx is not None:
+            config.spk_device_index = idx
+        else:
+            print(f"⚠️  保存的扬声器 '{spk_name}' 当前未找到，使用系统默认", flush=True)
+    else:
+        spk = saved.get("spk_device_index")
+        if spk is not None and _device_valid(spk, want_input=False):
+            config.spk_device_index = spk
+
+    if cam_name:
+        for i in _probe_cameras():
+            if _camera_name(i) == cam_name:
+                config.camera_id = i
+                break
+        else:
+            print(f"⚠️  保存的摄像头 '{cam_name}' 当前未找到，使用默认", flush=True)
+    else:
+        cam = saved.get("camera_id")
+        if cam is not None and _camera_valid(cam):
+            config.camera_id = cam
+
+    if saved.get("agc_enabled"):
         config.agc_enabled = True
 
     print("♻️  已自动应用上次保存的设备配置:"

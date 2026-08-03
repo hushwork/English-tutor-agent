@@ -6,7 +6,7 @@ set -e
 
 MODEL_DIR="/home/ubuntu/models/gemma4-e2b"
 CONVERT_DIR="/tmp/llama-convert"
-LLAMA_DIR="/home/ubuntu/English-tutor-agent/bin/llama-b10223"
+LLAMA_DIR="$(dirname "${BASH_SOURCE[0]}")/../bin/llama-b10223"
 
 cd "$CONVERT_DIR"
 export PYTHONPATH="$CONVERT_DIR:$CONVERT_DIR/gguf:$PYTHONPATH"

@@ -404,7 +404,7 @@ class CameraTutorAgent:
                 "type": "realtime",
                 "modalities": ["text", "audio"],
                 "instructions": self._build_instructions(),
-                "audio": {"output": {"voice": "af_heart"}},
+                "audio": {"output": {"voice": self.tutor.voice}},
                 "input_audio_format": "pcm",
                 "output_audio_format": "pcm",
                 "turn_detection": {

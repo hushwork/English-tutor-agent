@@ -359,8 +359,8 @@ def apply_device_config(config: AgentConfig, args: argparse.Namespace) -> None:
         if cam is not None and _camera_valid(cam):
             config.camera_id = cam
 
-    if saved.get("agc_enabled"):
-        config.agc_enabled = True
+    if "agc_enabled" in saved:
+        config.agc_enabled = bool(saved["agc_enabled"])
 
     print("♻️  已自动应用上次保存的设备配置:"
           f"  麦克风={config.mic_device_index} 扬声器={config.spk_device_index} "

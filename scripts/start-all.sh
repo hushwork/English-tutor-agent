@@ -23,11 +23,12 @@ wait_port() {  # wait_port <port> <name>
 }
 
 start() {
-  # 1) llama-server: Gemma-4-E4B + mmproj 视觉（CPU 推理；GPU 空闲时可加 --n-gpu-layers all）
+  # 1) llama-server: Gemma-4-E4B + mmproj 视觉（GPU 卸载；注意本机 Vulkan 显存
+  #    上报偶发损坏，若启动即崩可改回 --device none 强制 CPU）
   if ! ss -tln | grep -q ':8080 '; then
     nohup $LLAMA -m $MODELS/gemma4-e4b/gemma-4-E4B-it-Q4_K_M.gguf \
       --mmproj $MODELS/gemma4-e4b/mmproj-BF16.gguf \
-      --host 127.0.0.1 --port 8080 -c 8192 -t 12 --no-webui \
+      --host 127.0.0.1 --port 8080 -c 8192 -t 12 --no-webui --n-gpu-layers all \
       --no-jinja --chat-template "$CT" > $LOGS/llama.log 2>&1 &
   fi
   wait_port 8080 llama-server || return 1

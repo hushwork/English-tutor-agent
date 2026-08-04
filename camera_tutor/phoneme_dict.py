@@ -24,9 +24,10 @@ from typing import Optional
 import httpx
 
 from camera_tutor.avatar import PHONEME_TO_VISEME, Viseme
+from camera_tutor.paths import data_dir
 
 # Cache location
-_CACHE_DIR = Path.home() / ".camera-tutor-data"
+_CACHE_DIR = data_dir()
 _CMU_PATH = _CACHE_DIR / "cmudict.dict"
 
 # CMUdict source URL

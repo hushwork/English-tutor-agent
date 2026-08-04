@@ -6,7 +6,7 @@ FastAPI-based web server providing:
 - Child activity timeline
 - Device settings and controls
 
-Reuses english_tutor's web_server.py pattern (FastAPI + SSE + static serving).
+Self-contained: all imports come from the camera_tutor package.
 """
 
 from __future__ import annotations
@@ -26,12 +26,11 @@ from fastapi.staticfiles import StaticFiles
 # Import camera_tutor modules
 from camera_tutor.parent_report import ParentReportEngine
 from camera_tutor.decision_engine import DecisionEngine, TutorState, ChildState, ChildActivity, ChildMood
+from camera_tutor.paths import data_dir
 
-# Import english_tutor modules (reuse)
-import sys
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from english_tutor.spaced_repetition import SpacedRepetition
-from english_tutor.memory import ConversationMemory
+# Memory & SR (self-contained camera_tutor modules)
+from camera_tutor.spaced_repetition import SpacedRepetition
+from camera_tutor.memory import ConversationMemory
 
 # ── App setup ───────────────────────────────────────────────────
 
@@ -51,8 +50,8 @@ app.add_middleware(
 
 # Shared state
 report_engine = ParentReportEngine()
-sr = SpacedRepetition(storage_dir=Path(__file__).resolve().parent.parent / ".camera-tutor-data")
-memory = ConversationMemory(storage_dir=Path(__file__).resolve().parent.parent / ".camera-tutor-data")
+sr = SpacedRepetition(storage_dir=data_dir())
+memory = ConversationMemory(storage_dir=data_dir())
 decision_engine = DecisionEngine()
 
 # Tutor personas

@@ -40,10 +40,11 @@ from camera_tutor.camera import CameraPipeline
 from camera_tutor.avatar import Viseme
 from camera_tutor.vision_manager import VisionManager
 from camera_tutor.parent_report import ParentReportEngine
+from camera_tutor.paths import data_dir
 
-# Shared memory & SR (reuse english_tutor modules)
-from english_tutor.memory import ConversationMemory
-from english_tutor.spaced_repetition import SpacedRepetition
+# Memory & SR (self-contained camera_tutor modules)
+from camera_tutor.memory import ConversationMemory
+from camera_tutor.spaced_repetition import SpacedRepetition
 
 logger = logging.getLogger(__name__)
 
@@ -189,8 +190,7 @@ class CameraTutorAgent:
         self.memory: Optional[ConversationMemory] = None
         self.sr: Optional[SpacedRepetition] = None
         self.reporter: Optional[ParentReportEngine] = None
-        self._storage_dir: Path = Path(
-            __file__).resolve().parent.parent / ".camera-tutor-data"
+        self._storage_dir: Path = data_dir()
 
         # Track recent utterances for context
         self._last_child_utterance: str = ""

@@ -32,6 +32,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from camera_tutor.agent import CameraTutorAgent, AgentConfig
+from camera_tutor.paths import data_dir
 
 
 def _probe_cameras(max_index: int = 8) -> list[int]:
@@ -161,9 +162,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 # Stored inside the runtime data dir so it's git-ignored and travels
 # with the project checkout.
 
-CONFIG_PATH = os.path.join(
-    Path(__file__).resolve().parent.parent, ".camera-tutor-data", "devices.json"
-)
+CONFIG_PATH = str(data_dir() / "devices.json")
 _LEGACY_CONFIG_PATH = os.path.join(Path.home(), ".camera-tutor-devices.json")
 
 

@@ -7,23 +7,15 @@ into a parent-friendly daily report. Can be generated daily or on-demand.
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from camera_tutor.paths import data_dir
 
-DEFAULT_REPORT_DIR = os.environ.get(
-    "CAMERA_TUTOR_DATA_DIR",
-    str(Path(__file__).resolve().parent.parent / ".camera-tutor-data"),
-)
 
-# Per-user reports go under .english-tutor-data/{user_id}/reports/
-ENGLISH_TUTOR_DATA_DIR = os.environ.get(
-    "ENGLISH_TUTOR_DATA_DIR",
-    str(Path(__file__).resolve().parent.parent / ".english-tutor-data"),
-)
+DEFAULT_REPORT_DIR = str(data_dir())
 
 
 @dataclass
@@ -55,8 +47,8 @@ class ParentReportEngine:
                  user_id: str | None = None):
         self.user_id = user_id
         if user_id:
-            # Per-user reports: .english-tutor-data/{user_id}/reports/
-            self.storage_dir = Path(ENGLISH_TUTOR_DATA_DIR) / user_id / "reports"
+            # Per-user reports: .camera-tutor-data/{user_id}/reports/
+            self.storage_dir = data_dir() / user_id / "reports"
         else:
             self.storage_dir = Path(storage_dir or DEFAULT_REPORT_DIR)
         self.storage_dir.mkdir(parents=True, exist_ok=True)

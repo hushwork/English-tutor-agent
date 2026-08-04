@@ -8,13 +8,12 @@ Users select their preferred tutor at setup. Each persona defines:
 - Speaking rate guidance
 - Personality traits
 
-Stored in ~/.camera-tutor-data/tutor_prefs.json
+Stored in .camera-tutor-data/tutor_prefs.json (see camera_tutor/paths.py)
 """
 
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -221,8 +220,8 @@ TUTOR_LIBRARY: dict[str, TutorPersona] = {
 
 
 def _prefs_path() -> Path:
-    data_dir = os.environ.get("CAMERA_TUTOR_DATA_DIR", str(Path.home() / ".camera-tutor-data"))
-    return Path(data_dir) / "tutor_prefs.json"
+    from camera_tutor.paths import data_dir
+    return data_dir() / "tutor_prefs.json"
 
 
 def get_active_tutor() -> TutorPersona:

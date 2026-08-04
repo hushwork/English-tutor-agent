@@ -21,6 +21,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from camera_tutor.paths import data_dir
 from camera_tutor.spectral_viseme import _mfcc
 
 
@@ -100,7 +101,7 @@ def analyze_dir(wav_dir: str) -> None:
 
 def main():
     if len(sys.argv) < 2:
-        default = Path(__file__).resolve().parent.parent / ".camera-tutor-data" / "calibration"
+        default = data_dir() / "calibration"
         if default.is_dir():
             analyze_dir(str(default))
         else:

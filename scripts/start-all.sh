@@ -4,7 +4,7 @@
 set -u
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-PY=/home/ubuntu/camera-tutor-env/bin/python
+PY="$(pwd)/.venv/bin/python"
 LLAMA=bin/llama-b10223/llama-server
 MODELS=/home/ubuntu/models
 LOGS=logs

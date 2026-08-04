@@ -23,6 +23,9 @@ soundfile>=0.12.0
 # and the local speech-to-speech pipe (scripts/local_pipe.py)
 websocket-client>=1.7.0
 websockets>=12.0
+
+# WebRTC: remote A/V device mode (camera_tutor/rtc_device.py)
+aiortc>=1.13.0
 huggingface-hub>=0.24.0
 
 # Optional: face recognition (requires dlib)

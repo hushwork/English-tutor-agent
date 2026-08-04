@@ -75,6 +75,11 @@ class AgentConfig:
     server_vad_threshold: float = 0.5   # Server VAD sensitivity (lower = more sensitive)
     tts_speed: float = 1.0        # Speech rate: 0.25-4.0 (1.0 = normal)
 
+    # A/V source: "local" = sounddevice/cv2 hardware on this machine;
+    # "webrtc" = remote browser device (face_preview.html?device=1)
+    av_source: str = "local"
+    viseme_lead_ms: int = 80      # WebRTC mode: viseme delay to cover browser playout
+
     def __post_init__(self):
         if not self.api_key:
             self.api_key = os.environ.get("DASHSCOPE_API_KEY", "")
@@ -88,6 +93,16 @@ class AgentConfig:
         if env_gain:
             try:
                 self.mic_gain = float(env_gain)
+            except ValueError:
+                pass
+        # A/V source override
+        env_av = os.environ.get("AV_SOURCE")
+        if env_av:
+            self.av_source = env_av.strip().lower()
+        env_lead = os.environ.get("VISME_LEAD_MS")
+        if env_lead:
+            try:
+                self.viseme_lead_ms = int(env_lead)
             except ValueError:
                 pass
 
@@ -158,6 +173,7 @@ class CameraTutorAgent:
         self.vision: Optional[VisionManager] = None
         self.face_sync: Optional[FaceSyncManager] = None
         self.connection: Optional[RealtimeConnection] = None
+        self.rtc = None  # RTCDeviceManager, only in av_source="webrtc" mode
 
         # Tutor
         self.tutor = get_active_tutor()
@@ -194,17 +210,27 @@ class CameraTutorAgent:
         Does NOT start connections or threads — that happens in start().
         This lets callers override config before the agent goes live.
         """
-        # Camera
-        if self.config.camera_enabled:
-            self._setup_camera()
-
-        # Audio
-        self.audio = AudioManager(
-            mic_gain=self.config.mic_gain,
-            mic_device_index=self.config.mic_device_index,
-            spk_device_index=self.config.spk_device_index,
-            agc_enabled=self.config.agc_enabled,
-        )
+        # Camera + audio: local hardware or remote WebRTC device
+        if self.config.av_source == "webrtc":
+            from camera_tutor.rtc_device import RTCDeviceManager
+            self.rtc = RTCDeviceManager(
+                mic_gain=self.config.mic_gain,
+                viseme_lead_ms=self.config.viseme_lead_ms,
+            )
+            self.audio = self.rtc.audio
+            if self.config.camera_enabled:
+                self.rtc.camera.start()
+                self.camera = self.rtc.camera
+            logger.info("A/V source: WebRTC remote device")
+        else:
+            if self.config.camera_enabled:
+                self._setup_camera()
+            self.audio = AudioManager(
+                mic_gain=self.config.mic_gain,
+                mic_device_index=self.config.mic_device_index,
+                spk_device_index=self.config.spk_device_index,
+                agc_enabled=self.config.agc_enabled,
+            )
 
         # Face sync (dashboard connection)
         self.face_sync = FaceSyncManager()
@@ -606,13 +632,36 @@ class CameraTutorAgent:
             import httpx
             r = httpx.get(f"http://localhost:{port}/api/health", timeout=0.5)
             if r.status_code == 200:
+                if self.config.av_source == "webrtc":
+                    logger.error(
+                        "Port %d already has a dashboard, but WebRTC device mode "
+                        "requires the dashboard to run inside THIS process "
+                        "(/rtc/offer signaling). Stop the other dashboard first.",
+                        port,
+                    )
+                    sys.exit(1)
                 logger.info("Dashboard already running on port %d", port)
                 return
-        except Exception:
+        except httpx.RequestError:
             pass
+
+        # Register the RTC manager before uvicorn starts so /rtc/offer
+        # is live as soon as the port accepts connections.
+        if self.rtc is not None:
+            from camera_tutor.rtc_device import set_rtc_manager
+            set_rtc_manager(self.rtc)
 
         logger.info("Starting dashboard on port %d...", port)
         import uvicorn
+
+        # TLS: required for getUserMedia from remote browsers
+        # (getUserMedia needs a secure context; localhost is exempt).
+        ssl_kwargs: dict = {}
+        cert = os.environ.get("DASHBOARD_TLS_CERT", "")
+        key = os.environ.get("DASHBOARD_TLS_KEY", "")
+        if cert and key:
+            ssl_kwargs = {"ssl_certfile": cert, "ssl_keyfile": key}
+            logger.info("Dashboard TLS enabled (cert=%s)", cert)
 
         def _run_dashboard():
             uvicorn.run(
@@ -620,6 +669,7 @@ class CameraTutorAgent:
                 host="0.0.0.0",
                 port=port,
                 log_level="warning",
+                **ssl_kwargs,
             )
 
         self._dashboard_thread = threading.Thread(
@@ -628,12 +678,14 @@ class CameraTutorAgent:
         self._dashboard_thread.start()
 
         # Wait for dashboard to be ready
+        scheme = "https" if ssl_kwargs else "http"
         for i in range(30):
             try:
                 import httpx
-                r = httpx.get(f"http://localhost:{port}/api/health", timeout=0.5)
+                r = httpx.get(f"{scheme}://localhost:{port}/api/health",
+                              timeout=0.5, verify=False)
                 if r.status_code == 200:
-                    logger.info("Dashboard ready on http://localhost:%d", port)
+                    logger.info("Dashboard ready on %s://localhost:%d", scheme, port)
                     return
             except Exception:
                 pass
@@ -896,9 +948,24 @@ class CameraTutorAgent:
                     _hx.get(f"http://localhost:{self.config.dashboard_port}{p}", timeout=2)
                 except Exception:
                     pass
-            print(f"   🔗 http://localhost:{self.config.dashboard_port}/static/face_preview.html")
+            scheme = "https" if os.environ.get("DASHBOARD_TLS_CERT") else "http"
+            print(f"   🔗 {scheme}://localhost:{self.config.dashboard_port}/static/face_preview.html")
+            if self.config.av_source == "webrtc":
+                print(f"   📱 设备端（远程采集）: {scheme}://{self._lan_ip()}:"
+                      f"{self.config.dashboard_port}/static/face_preview.html?device=1")
         except Exception:
             pass
+
+    @staticmethod
+    def _lan_ip() -> str:
+        """Best-effort LAN IP for the device-mode URL (no traffic sent)."""
+        import socket
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.connect(("8.8.8.8", 80))
+                return s.getsockname()[0]
+        except OSError:
+            return "<本机IP>"
 
     def _seconds_since_last_speech(self) -> float:
         if self._last_speech_time == 0.0:

@@ -41,8 +41,8 @@ MacBook USB-C ←── Poly Sync 20
 cd ~/workspace/english-tutor
 
 # 创建虚拟环境
-python3 -m venv ~/camera-tutor-env
-source ~/camera-tutor-env/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 
 # Mac 需要 portaudio（PyAudio 的底层 C 库，用来操作麦克风和音箱）
 # Linux 跳过这步
@@ -231,8 +231,8 @@ sudo apt update && sudo apt install -y \
     git
 
 # 创建虚拟环境
-python3 -m venv ~/camera-tutor-env
-source ~/camera-tutor-env/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 
 # 安装 Python 依赖
 cd ~/camera-tutor  # 或你的项目目录
@@ -444,7 +444,7 @@ mkdir -p /mnt/ssd/camera-tutor-data
 ### B.5.3 安装项目依赖
 
 ```bash
-source ~/camera-tutor-env/bin/activate
+source .venv/bin/activate
 pip install -r requirements.txt
 pip install mediapipe  # 手势追踪（Pro 版）
 ```
@@ -650,8 +650,8 @@ CAMERA_TUTOR_DATA_DIR=~/.camera-tutor-data
 EOF
 
 # Python 依赖
-python3 -m venv ~/camera-tutor-env
-source ~/camera-tutor-env/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 ```
@@ -705,7 +705,7 @@ done
 echo "✅ 推理服务就绪"
 
 echo "🎤 启动 Camera Tutor..."
-source ~/camera-tutor-env/bin/activate
+source .venv/bin/activate
 cd ~/workspace/english-tutor
 python3 camera_tutor/demo.py
 

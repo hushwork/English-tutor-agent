@@ -126,15 +126,10 @@ class VisionManager:
 
     def _reader_loop(self) -> None:
         """Continuously capture frames and update the shared buffer."""
-        cap = self._camera._cap
-        if cap is None:
-            logger.warning("Camera capture not available — reader disabled")
-            return
-
         while not self._stop_event.is_set():
             try:
-                ret, img = cap.read()
-                if not ret:
+                ret, img = self._camera.read_frame()
+                if not ret or img is None:
                     time.sleep(0.05)
                     continue
                 # 等比缩放到长边 768：保留细节给 VLM，不压扁宽高比

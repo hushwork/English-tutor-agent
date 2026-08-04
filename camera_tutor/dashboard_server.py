@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
@@ -369,6 +369,39 @@ async def health_check():
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "version": "0.1.0",
     }
+
+
+# ── WebRTC device signaling ─────────────────────────────────────
+
+@app.post("/rtc/offer")
+async def rtc_offer(request: Request):
+    """WebRTC signaling: browser sends an SDP offer, gets an answer.
+
+    Only available when the agent runs with av_source=webrtc (the RTC
+    manager lives in the agent process). Optional bearer token via
+    RTC_TOKEN env var.
+    """
+    token = os.environ.get("RTC_TOKEN", "")
+    if token:
+        auth = request.headers.get("Authorization", "")
+        if auth != f"Bearer {token}":
+            raise HTTPException(status_code=401, detail="invalid RTC token")
+
+    from camera_tutor.rtc_device import get_rtc_manager
+    manager = get_rtc_manager()
+    if manager is None:
+        raise HTTPException(
+            status_code=409,
+            detail="WebRTC device mode not enabled (start with --av-source webrtc)",
+        )
+
+    try:
+        payload = await request.json()
+        sdp, offer_type = payload["sdp"], payload["type"]
+    except Exception:
+        raise HTTPException(status_code=400, detail="expected {sdp, type} JSON body")
+
+    return await manager.handle_offer(sdp, offer_type)
 
 
 # ── Main ────────────────────────────────────────────────────────

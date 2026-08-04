@@ -151,6 +151,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="开启麦克风 AGC 自动增益")
     p.add_argument("--reset-devices", action="store_true",
                    help="清除已保存的设备配置")
+    p.add_argument("--av-source", choices=["local", "webrtc"], default=None,
+                   help="音视频来源：local=本机麦克风/摄像头（默认）；"
+                        "webrtc=远程浏览器设备（face_preview.html?device=1）")
     return p.parse_args(argv)
 
 
@@ -380,7 +383,13 @@ def main():
     logging.getLogger("uvicorn").setLevel(logging.WARNING)
 
     config = AgentConfig()
-    apply_device_config(config, args)
+    if args.av_source:
+        config.av_source = args.av_source
+    if config.av_source == "webrtc":
+        # Remote device supplies mic/camera/speaker — nothing local to select
+        print("🌐 WebRTC 设备模式：音视频来自远程浏览器，跳过本地设备选择", flush=True)
+    else:
+        apply_device_config(config, args)
     agent = CameraTutorAgent(config=config)
 
     print("=" * 55)

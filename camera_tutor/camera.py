@@ -99,6 +99,16 @@ class CameraPipeline:
 
     # ── Frame capture ────────────────────────────────────────────
 
+    def read_frame(self) -> tuple[bool, Optional[np.ndarray]]:
+        """Raw frame read — the seam VisionManager consumes.
+
+        Returns (ok, BGR ndarray). Mirrors cv2.VideoCapture.read() so
+        alternative sources (e.g. RTCFrameSource) can duck-type this.
+        """
+        if not self._running or self._cap is None:
+            return False, None
+        return self._cap.read()
+
     def capture(self) -> Optional[CapturedFrame]:
         """Capture a single frame. Returns None if capture fails."""
         if not self._running or self._cap is None:

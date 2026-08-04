@@ -12,12 +12,19 @@
   .dot.on { background:#4ecf8d; }
   .dot.off { background:#ff5c6c; }
   #camera { position:fixed; top:12px; right:12px; width:160px; border-radius:8px; border:2px solid #2a2d3a; opacity:0.85; z-index:100; display:none; }
+  #startOverlay { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(15,17,23,.85); z-index:200; }
+  #startOverlay button { font:16px sans-serif; padding:14px 32px; border-radius:10px; border:none; background:#4ecf8d; color:#0f1117; cursor:pointer; }
 </style>
 </head>
 <body>
 <img id="camera">
+<video id="localCam" autoplay muted playsinline
+       style="position:fixed;top:12px;right:12px;width:160px;border-radius:8px;border:2px solid #2a2d3a;opacity:0.85;z-index:100;display:none;"></video>
+<audio id="remoteAudio" autoplay></audio>
+<div id="startOverlay"><button id="startBtn">🎤 点击开始对话</button></div>
 <div id="info">
   <span class="dot off" id="wssDot"></span>
+  <span class="dot off" id="rtcDot" style="display:none"></span>
   <span id="status">Loading...</span>
   <span>👄<span id="mouthVal">0</span></span>
 </div>
@@ -25,6 +32,9 @@
 <script src="live2d/core/live2dcubismcore.min.js"></script>
 <script type="module" src="live2d/bundle.js"></script>
 <script>
+const DEVICE_MODE = new URLSearchParams(location.search).get('device') === '1';
+const RTC_TOKEN = new URLSearchParams(location.search).get('token') || '';
+
 (function connectWS() {
   const p = location.protocol === 'https:' ? 'wss://' : 'ws://';
   const ws = new WebSocket(p + location.host + '/ws/emma/face');
@@ -36,7 +46,8 @@
       document.getElementById('status').textContent = d.transcript ? '💬 '+d.transcript : '🟢 Live';
       document.getElementById('mouthVal').textContent = d.mouth_open.toFixed(2);
     }
-    if (d.camera_frame) {
+    // Device mode shows its own local camera; skip the relayed JPEG.
+    if (d.camera_frame && !DEVICE_MODE) {
       const cam = document.getElementById('camera');
       cam.src = 'data:image/jpeg;base64,' + d.camera_frame;
       cam.style.display = 'block';
@@ -45,6 +56,74 @@
   ws.onclose = () => { document.getElementById('wssDot').className = 'dot off'; setTimeout(connectWS, 2000); };
   ws.onerror = () => ws.close();
 })();
+
+// ── Device mode: this browser IS the mic/camera/speaker (WebRTC) ──
+async function startDevice() {
+  document.getElementById('startOverlay').style.display = 'none';
+  const rtcDot = document.getElementById('rtcDot');
+  const statusEl = document.getElementById('status');
+
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
+      video: { width: 1280, height: 720 },
+    });
+  } catch (e) {
+    statusEl.textContent = '⚠️ 无法访问麦克风/摄像头: ' + e.message;
+    document.getElementById('startOverlay').style.display = 'flex';
+    return;
+  }
+  const localCam = document.getElementById('localCam');
+  localCam.srcObject = stream;
+  localCam.style.display = 'block';
+
+  const pc = new RTCPeerConnection();   // LAN: no STUN/TURN needed
+  stream.getTracks().forEach(t => pc.addTrack(t, stream));
+  pc.ontrack = (ev) => {
+    if (ev.track.kind === 'audio') {
+      document.getElementById('remoteAudio').srcObject = ev.streams[0];
+    }
+  };
+  pc.onconnectionstatechange = () => {
+    const ok = pc.connectionState === 'connected';
+    rtcDot.className = 'dot ' + (ok ? 'on' : 'off');
+    if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+      statusEl.textContent = '🔄 RTC 断开，重连中...';
+      setTimeout(() => startDevice(), 2000);
+    }
+  };
+
+  await pc.setLocalDescription(await pc.createOffer());
+  await new Promise(res => {   // server does not trickle — gather first
+    if (pc.iceGatheringState === 'complete') return res();
+    pc.addEventListener('icegatheringstatechange', () => {
+      if (pc.iceGatheringState === 'complete') res();
+    });
+  });
+
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (RTC_TOKEN) headers['Authorization'] = 'Bearer ' + RTC_TOKEN;
+    const resp = await fetch('/rtc/offer', {
+      method: 'POST', headers,
+      body: JSON.stringify({ sdp: pc.localDescription.sdp, type: pc.localDescription.type }),
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    await pc.setRemoteDescription(await resp.json());
+    statusEl.textContent = '🟢 设备已连接';
+  } catch (e) {
+    statusEl.textContent = '⚠️ 信令失败: ' + e.message;
+    setTimeout(() => startDevice(), 3000);
+  }
+}
+
+if (DEVICE_MODE) {
+  document.getElementById('rtcDot').style.display = 'inline-block';
+  document.getElementById('startOverlay').style.display = 'flex';
+  document.getElementById('status').textContent = '设备模式';
+  document.getElementById('startBtn').onclick = startDevice;
+}
 </script>
 </body>
 </html>

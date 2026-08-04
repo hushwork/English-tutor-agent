@@ -82,8 +82,8 @@ sudo apt install -y \
     cmake build-essential
 
 # 创建虚拟环境
-python3 -m venv ~/camera-tutor-env
-source ~/camera-tutor-env/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 ```
 
 ### 2.2 PyTorch for Jetson
@@ -352,7 +352,7 @@ python3 scripts/benchmark.py --model ~/models/Qwen2.5-Omni-7B
 # ~/camera-tutor/start.sh
 
 #!/bin/bash
-source ~/camera-tutor-env/bin/activate
+source .venv/bin/activate
 
 # 设置 GPU 高性能模式
 sudo nvpmodel -m 0

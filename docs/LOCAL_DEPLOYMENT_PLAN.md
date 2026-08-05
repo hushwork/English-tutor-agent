@@ -12,6 +12,17 @@ realtime_demo.py ──ws──▶ local_pipe.py (:8765) ──▶ llama-server 
 
 默认配置端到端对话延迟约 3 秒（VAD 0.7s + STT ~0.3s + LLM ~1.7s + TTS 流式出声）。
 
+## 实测资源占用（2026-08-05，RTX 4080 16GB）
+
+| 进程 | VRAM | 内存 (RSS) |
+|------|------|-----------|
+| llama-server（Gemma E4B + mmproj，GPU 卸载） | 5225 MiB | ~9.8 GB（含模型 mmap） |
+| local_pipe（whisper-base + Kokoro，CUDA） | 1416 MiB | ~2.5 GB |
+| dashboard + realtime_demo | — | ~350 MB |
+| **合计** | **~6.7 GB** | 整机 ~15 GB（含缓存） |
+
+结论：8GB 显存（RTX 4060）即可运行，降级顺序见 DEPLOYMENT_GUIDE §C.1；CPU 纯推理可跑但每轮约 60s，仅作应急。
+
 ## 支持的模型
 
 | 模型 | 启动命令 | GPU | 速度 | 视觉 |

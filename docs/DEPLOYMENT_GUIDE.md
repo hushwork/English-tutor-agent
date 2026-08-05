@@ -573,10 +573,22 @@ python3 scripts/quantize_omni.py \
 
 | 最低配置 | 推荐配置 |
 |---------|---------|
-| RTX 3060 12GB | RTX 4060 Ti 16GB |
+| RTX 4060 8GB（需启用降级项，见下方实测） | RTX 3060 12GB / RTX 4080 16GB |
 | 16 GB 系统内存 | 32 GB 系统内存 |
 | Ubuntu 22.04 / Arch Linux | Ubuntu 22.04 |
 | USB 摄像头 + USB 麦克风/音箱 | Logitech Brio 100 + Poly Sync 20 |
+
+> **实测资源占用（2026-08-05，RTX 4080，当前默认管线：Gemma-4-E4B Q4_K_M + mmproj 视觉 + whisper-base + Kokoro，全部 GPU）**
+>
+> | 进程 | VRAM |
+> |------|------|
+> | llama-server（LLM + 视觉） | 5225 MiB |
+> | local_pipe（whisper + Kokoro，CUDA） | 1416 MiB |
+> | **合计** | **~6.7 GB / 16 GB** |
+>
+> - 系统内存：整机 ~15 GB（含模型 mmap 与页缓存），16 GB 起步、32 GB 宽裕
+> - 端到端对话延迟：~3 秒（VAD 0.7s + STT 0.3s + LLM 1.7s + TTS 流式）
+> - **8GB 显卡（RTX 4060）可行**，余量约 1 GB；紧张时按序降级：mmproj 换 Q8（省 ~0.5GB）→ whisper 回 CPU（+~1s 延迟）→ Kokoro 回 CPU（+1~2s）→ llama `-c 4096`（省 KV cache）
 
 ### C.2 安装 NVIDIA 驱动与 CUDA
 

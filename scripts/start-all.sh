@@ -23,6 +23,11 @@ wait_port() {  # wait_port <port> <name>
 }
 
 start() {
+  # WebRTC 远程设备模式：.env 里 AV_SOURCE=webrtc 或 `start-all.sh start-webrtc`
+  local webrtc=0
+  [ "${1:-}" = "webrtc" ] && webrtc=1
+  grep -q '^AV_SOURCE=webrtc' .env 2>/dev/null && webrtc=1
+
   # 1) llama-server: Gemma-4-E4B + mmproj 视觉（GPU 卸载；注意本机 Vulkan 显存
   #    上报偶发损坏，若启动即崩可改回 --device none 强制 CPU）
   if ! ss -tln | grep -q ':8080 '; then
@@ -34,11 +39,12 @@ start() {
   wait_port 8080 llama-server || return 1
 
   # 2) 家长仪表盘（独立进程，不随 demo 重启而死）
-  if ! ss -tln | grep -q ':8200 '; then
+  #    WebRTC 模式下跳过：dashboard 必须由 realtime_demo 在同进程拉起（/rtc/offer 信令）
+  if [ "$webrtc" = 0 ] && ! ss -tln | grep -q ':8200 '; then
     nohup $PY -m uvicorn camera_tutor.dashboard_server:app \
       --host 0.0.0.0 --port 8200 --log-level warning > $LOGS/dashboard.log 2>&1 &
+    wait_port 8200 dashboard || return 1
   fi
-  wait_port 8200 dashboard || return 1
 
   # 3) 本地语音管道（whisper STT → LLM → Kokoro TTS）
   if ! ss -tln | grep -q ':8765 '; then
@@ -48,11 +54,17 @@ start() {
 
   # 4) 主程序（设备选择自动从 .camera-tutor-data/devices.json 按名字恢复）
   if ! pgrep -f 'camera_tutor/realtime_demo.py' > /dev/null; then
-    nohup $PY camera_tutor/realtime_demo.py > $LOGS/realtime_demo.log 2>&1 &
+    local av_args=""
+    [ "$webrtc" = 1 ] && av_args="--av-source webrtc"
+    nohup $PY camera_tutor/realtime_demo.py $av_args > $LOGS/realtime_demo.log 2>&1 &
     sleep 10
   fi
   echo "✅ realtime_demo 已启动"
-  echo "   Emma 形象: http://$(hostname -I | awk '{print $1}'):8200/static/face_preview.html"
+  if [ "$webrtc" = 1 ]; then
+    echo "   📱 设备端: https://$(hostname -I | awk '{print $1}'):8200/static/face_preview.html?device=1"
+  else
+    echo "   Emma 形象: http://$(hostname -I | awk '{print $1}'):8200/static/face_preview.html"
+  fi
 }
 
 stop() {
@@ -75,7 +87,8 @@ status() {
 
 case "${1:-start}" in
   start)  start ;;
+  start-webrtc) start webrtc ;;
   stop)   stop ;;
   status) status ;;
-  *) echo "用法: $0 [start|stop|status]"; exit 1 ;;
+  *) echo "用法: $0 [start|start-webrtc|stop|status]"; exit 1 ;;
 esac

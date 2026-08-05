@@ -112,6 +112,10 @@ async def stt(pcm) -> str:
         except Exception as e:
             log.warning(f"gemma STT 失败，回退 whisper: {e}")
     return stt_whisper(pcm)
+
+if STT_BACKEND == "whisper":
+    get_whisper()   # 主后端是 whisper 时启动即加载，避免首轮 STT 卡顿
+
 kokoro_pipe = KPipeline(lang_code="a")
 try:
     import torch

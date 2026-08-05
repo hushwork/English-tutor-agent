@@ -83,7 +83,7 @@ tail -f logs/local_pipe.log      # 调延迟/识别问题时最常用
 | `VAD_THRESHOLD` | 400 | RMS 语音检测阈值。安静房间 400 合适；噪音大再上调 |
 | `VAD_SILENCE` | 0.7 | 说完话后的静音判定时长（秒）。太短会把长停顿切成两段 |
 | `MIC_GAIN` | 1.0 | 麦克风数字增益，由 audio_diagnostic 推荐 |
-| `AV_SOURCE` | local | `webrtc` = 远程浏览器采集音视频（见 README WebRTC 章节） |
+| `AV_SOURCE` | local | `webrtc` = 远程浏览器采集音视频（见 [docs/WEBRTC.md](WEBRTC.md)） |
 | `VISME_LEAD_MS` | 80 | WebRTC 模式唇形同步补偿（毫秒） |
 
 ⚠️ **使用本地管线时必须关闭麦克风 AGC**（设备选择时不要开 `--agc`）：AGC 会把噪音底放大到 ~2600 RMS，导致 RMS VAD 永远处于"说话中"，永不切段、永不回复。

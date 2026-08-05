@@ -566,6 +566,32 @@ python3 camera_tutor/realtime_demo.py --reset-devices
 | 校准 | `calibrate_mfcc.py` — 录制 → 分析 → 阈值更新（模型更新时用） |
 | 渲染 | Live2D Cubism SDK + EMA 平滑 (α=0.35) |
 
+### WebRTC 远程设备模式
+
+用一台远程浏览器（手机 / 平板 / 另一台电脑）替代本地麦克风、扬声器、摄像头——
+agent 端对话管线零改动（接缝替身设计，见 `camera_tutor/rtc_device.py`）。
+
+```bash
+# .env 中启用
+AV_SOURCE=webrtc
+# 远程浏览器 getUserMedia 需要 HTTPS（localhost 除外）→ mkcert 签发证书
+DASHBOARD_TLS_CERT=/path/to/cert.pem
+DASHBOARD_TLS_KEY=/path/to/key.pem
+
+# 启动（dashboard 与 agent 同进程）
+.venv/bin/python camera_tutor/realtime_demo.py --av-source webrtc
+
+# 远程浏览器打开，点击开始
+# https://<agent-ip>:8200/static/face_preview.html?device=1
+```
+
+- 信令：HTTP 一次性 offer/answer（`POST /rtc/offer`），可选 `RTC_TOKEN` 鉴权
+- 音频：上行 48k→16k 重采样，下行 TTS 24k→48k 实时节拍发送
+- 唇形：viseme 随音频配对，经 WebSocket 推送，`VISME_LEAD_MS`（默认 80ms）补偿浏览器缓冲
+- **当前仅限局域网**（无 STUN/TURN）、单 peer
+
+完整设计与已知边界：[docs/WEBRTC.md](docs/WEBRTC.md)
+
 ### 硬件最低投入
 
 | 设备 | 型号 | 价格 |

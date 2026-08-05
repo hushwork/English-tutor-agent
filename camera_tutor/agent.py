@@ -399,13 +399,17 @@ class CameraTutorAgent:
         logger.info("WebSocket opened, configuring session...")
 
         # Configure session（本地 s2s 只需基础字段：voice/speed/transcription/silence 会报错）
+        audio_output = {"voice": self.tutor.voice}
+        if os.environ.get("OMNI_WS_URL", ""):
+            # 本地 local_pipe：按角色传递语速（云端 Omni 不认此字段，不发）
+            audio_output["speed"] = getattr(self.tutor, "speed", 1.0)
         ws.send(json.dumps({
             "type": "session.update",
             "session": {
                 "type": "realtime",
                 "modalities": ["text", "audio"],
                 "instructions": self._build_instructions(),
-                "audio": {"output": {"voice": self.tutor.voice}},
+                "audio": {"output": audio_output},
                 "input_audio_format": "pcm",
                 "output_audio_format": "pcm",
                 "turn_detection": {

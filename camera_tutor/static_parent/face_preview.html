@@ -66,7 +66,10 @@ async function startDevice() {
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
+      // 尽量拿原始音频：AGC 会放大噪音底破坏服务端 RMS VAD；
+      // noiseSuppression 会把小声语音当噪音吃掉；AEC 保留以防外放场景回采
+      audio: { echoCancellation: true, noiseSuppression: false, channelCount: 1,
+               autoGainControl: false },
       video: { width: 1280, height: 720 },
     });
   } catch (e) {
@@ -79,6 +82,7 @@ async function startDevice() {
   localCam.style.display = 'block';
 
   const pc = new RTCPeerConnection();   // LAN: no STUN/TURN needed
+  window._rtcPC = pc;                   // exposed for diagnostics/e2e tests
   stream.getTracks().forEach(t => pc.addTrack(t, stream));
   pc.ontrack = (ev) => {
     if (ev.track.kind === 'audio') {

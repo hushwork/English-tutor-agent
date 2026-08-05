@@ -129,6 +129,11 @@ class RTCAudioManager:
         # Level tracking
         self._level_samples: list[float] = []
 
+        # Debug: dump exactly what read_mic() returns (raw s16 mono 16kHz)
+        import os
+        self._dump_path = os.environ.get("RTC_MIC_DUMP", "")
+        self._dump_file = open(self._dump_path, "ab") if self._dump_path else None
+
     # ── Viseme handler ───────────────────────────────────────────
 
     def set_viseme_handler(self, handler: Callable[[dict], None]) -> None:
@@ -191,6 +196,9 @@ class RTCAudioManager:
             return
         self._started = False
         self._stop_viseme_drain()
+        if self._dump_file is not None:
+            self._dump_file.close()
+            self._dump_file = None
         task = self._mic_task
         self._mic_task = None
         if task is not None:
@@ -204,7 +212,7 @@ class RTCAudioManager:
         if old is not None:
             old.cancel()
         self._mic_task = asyncio.ensure_future(self._consume_mic(track))
-        self._peer_connected = True
+        self.notify_peer_connected()
         logger.info("RTC mic track attached")
 
     async def _consume_mic(self, track) -> None:
@@ -218,7 +226,11 @@ class RTCAudioManager:
         except Exception as e:
             logger.warning("RTC mic consume error: %s", e)
         finally:
-            self._peer_connected = False
+            # 仅当本任务仍是当前 mic 消费者时才清除连接标志——
+            # 否则旧 peer 的收尾会覆盖新连接的状态（双重 offer 竞态，
+            # 症状：mic 正常但 write_spk 全部丢弃，对端无声）
+            if self._mic_task is asyncio.current_task():
+                self._peer_connected = False
             logger.info("RTC mic track ended")
 
     def _feed_mic(self, pcm: bytes) -> None:
@@ -251,7 +263,11 @@ class RTCAudioManager:
             self._track_level(arr)
             if overflow:
                 logger.warning("RTC mic buffer overflow x%d", overflow)
-            return arr.astype(np.int16).tobytes()
+            out = arr.astype(np.int16).tobytes()
+            if self._dump_file is not None:
+                self._dump_file.write(out)
+                self._dump_file.flush()
+            return out
         except Exception as e:
             logger.warning("RTC mic read error: %s", e)
             return None
@@ -317,6 +333,10 @@ class RTCAudioManager:
     def create_out_track(self) -> "_TTSOutTrack":
         """New outbound audio track for a peer (one per peer connection)."""
         return _TTSOutTrack(self)
+
+    def notify_peer_connected(self) -> None:
+        self._peer_connected = True
+        self._spk_dropped_no_peer = 0
 
     def notify_peer_disconnected(self) -> None:
         self._peer_connected = False
@@ -495,7 +515,11 @@ class RTCDeviceManager:
             @pc.on("connectionstatechange")
             async def on_state():
                 logger.info("RTC connection state: %s", pc.connectionState)
-                if pc.connectionState in ("failed", "closed", "disconnected"):
+                if pc is not self._pc:
+                    return  # 旧连接的迟到事件，不影响当前 peer 状态
+                if pc.connectionState == "connected":
+                    self.audio.notify_peer_connected()
+                elif pc.connectionState in ("failed", "closed", "disconnected"):
                     self.audio.notify_peer_disconnected()
                     if pc.connectionState in ("failed", "closed"):
                         await self._close_pc()

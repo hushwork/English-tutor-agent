@@ -27,3 +27,4 @@ scripts/voice_bridge.py
 scripts/gemma_proxy.py
 scripts/response_proxy.py
 scripts/pull-loop.sh
+certs/

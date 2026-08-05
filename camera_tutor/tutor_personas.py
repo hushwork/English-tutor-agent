@@ -155,7 +155,7 @@ TUTOR_LIBRARY: dict[str, TutorPersona] = {
         teaching_style="warm",
         personality_traits=["encouraging", "patient", "warm", "cheerful"],
         age_appearance="28",
-        speed=1.0,
+        speed=0.85,
     ),
     "serena": TutorPersona(
         id="serena",
@@ -169,7 +169,7 @@ TUTOR_LIBRARY: dict[str, TutorPersona] = {
         teaching_style="gentle",
         personality_traits=["soft-spoken", "calm", "gentle", "nurturing"],
         age_appearance="32",
-        speed=0.8,
+        speed=0.7,
     ),
     "bella": TutorPersona(
         id="bella",
@@ -183,7 +183,7 @@ TUTOR_LIBRARY: dict[str, TutorPersona] = {
         teaching_style="playful",
         personality_traits=["playful", "silly", "energetic", "childlike"],
         age_appearance="20",
-        speed=1.25,
+        speed=1.05,
     ),
     "sophie": TutorPersona(
         id="sophie",
@@ -197,7 +197,7 @@ TUTOR_LIBRARY: dict[str, TutorPersona] = {
         teaching_style="energetic",
         personality_traits=["curious", "smart", "energetic", "inspiring"],
         age_appearance="24",
-        speed=1.15,
+        speed=1.0,
     ),
     "olivia": TutorPersona(
         id="olivia",
@@ -211,7 +211,7 @@ TUTOR_LIBRARY: dict[str, TutorPersona] = {
         teaching_style="warm",
         personality_traits=["creative", "imaginative", "warm", "artistic"],
         age_appearance="26",
-        speed=0.9,
+        speed=0.75,
     ),
 }
 

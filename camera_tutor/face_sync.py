@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from typing import Optional
 
@@ -28,9 +29,18 @@ from camera_tutor.live2d_bridge import VisemeParams
 
 logger = logging.getLogger(__name__)
 
-DASHBOARD_WS_URL = "ws://localhost:8200/ws/emma/source"
-DASHBOARD_HTTP_URL = "http://localhost:8200/api/emma/face"
-DASHBOARD_CAMERA_URL = "http://localhost:8200/api/emma/camera"
+# dashboard 开 TLS 时（WebRTC 远程设备模式）必须走 wss/https，
+# 否则 WS 握手失败、HTTP fallback 也被静默吞掉——唇形完全不动
+_DASHBOARD_TLS = bool(os.environ.get("DASHBOARD_TLS_CERT")
+                      and os.environ.get("DASHBOARD_TLS_KEY"))
+_HTTP = "https" if _DASHBOARD_TLS else "http"
+_WS = "wss" if _DASHBOARD_TLS else "ws"
+DASHBOARD_WS_URL = f"{_WS}://localhost:8200/ws/emma/source"
+DASHBOARD_HTTP_URL = f"{_HTTP}://localhost:8200/api/emma/face"
+DASHBOARD_CAMERA_URL = f"{_HTTP}://localhost:8200/api/emma/camera"
+# 本机回环 + 自签证书（mkcert）：跳过证书校验
+_SSL_OPT = {"cert_reqs": 0} if _DASHBOARD_TLS else None   # ssl.CERT_NONE
+_HTTP_VERIFY = not _DASHBOARD_TLS
 
 WS_RETRY_ATTEMPTS = 5
 WS_RETRY_DELAY = 0.5
@@ -65,9 +75,10 @@ class FaceSyncManager:
 
         for attempt in range(WS_RETRY_ATTEMPTS):
             try:
-                self._ws = _ws_mod.create_connection(
-                    DASHBOARD_WS_URL, timeout=2,
-                )
+                kw = {"timeout": 2}
+                if _SSL_OPT is not None:
+                    kw["sslopt"] = _SSL_OPT
+                self._ws = _ws_mod.create_connection(DASHBOARD_WS_URL, **kw)
                 self._http_fallback = False
                 logger.info("Face WS connected to dashboard")
                 self._started = True
@@ -144,6 +155,7 @@ class FaceSyncManager:
                 DASHBOARD_CAMERA_URL,
                 json={"camera_frame": b64},
                 timeout=2,
+                verify=_HTTP_VERIFY,
             )
         except httpx.RequestError:
             pass
@@ -179,7 +191,10 @@ class FaceSyncManager:
         """Attempt a single WS reconnect."""
         try:
             import websocket as _ws_mod
-            self._ws = _ws_mod.create_connection(DASHBOARD_WS_URL, timeout=1)
+            kw = {"timeout": 1}
+            if _SSL_OPT is not None:
+                kw["sslopt"] = _SSL_OPT
+            self._ws = _ws_mod.create_connection(DASHBOARD_WS_URL, **kw)
             self._ws.send(json.dumps(payload))
             logger.info("Face WS reconnected")
         except Exception:
@@ -188,7 +203,8 @@ class FaceSyncManager:
     def _send_http(self, payload: dict) -> None:
         """Send payload via HTTP POST."""
         try:
-            httpx.post(DASHBOARD_HTTP_URL, json=payload, timeout=1)
+            httpx.post(DASHBOARD_HTTP_URL, json=payload, timeout=1,
+                       verify=_HTTP_VERIFY)
         except httpx.RequestError:
             pass
         except Exception:

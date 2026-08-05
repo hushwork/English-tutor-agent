@@ -1,4 +1,4 @@
-"""本地语音管线 — whisper-base + Kokoro TTS + 视觉"""
+"""本地语音管线 — whisper（WHISPER_MODEL 可选 base/small/...）+ Kokoro TTS + 视觉"""
 import os
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
@@ -13,6 +13,8 @@ import websockets
 from faster_whisper import WhisperModel
 from kokoro import KPipeline
 import httpx, soundfile
+from dotenv import load_dotenv
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [PIPE] %(message)s")
 log = logging.getLogger("pipe")
@@ -55,12 +57,61 @@ frame_buffer: deque[str] = deque(maxlen=FRAME_BUF_SIZE)
 scene_history: deque[str] = deque(maxlen=SCENE_HISTORY_SIZE)
 last_frame = {"img": None, "probed": True}
 
-try:
-    whisper = WhisperModel("base", device="cuda", compute_type="float16")
-    log.info("whisper: CUDA")
-except Exception as e:
-    log.warning(f"whisper CUDA 不可用，回退 CPU: {e}")
-    whisper = WhisperModel("base", device="cpu", compute_type="int8", cpu_threads=2)
+WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "small")  # base/small/medium
+# STT 后端：gemma = 音频直送本地 LLM 音频输入（实测对儿童语音最准，延迟略高）；
+#           whisper = faster-whisper 本地转写（快，小模型误差大）
+STT_BACKEND = os.environ.get("STT_BACKEND", "gemma")
+
+_whisper = None
+def get_whisper():
+    """whisper 懒加载：STT_BACKEND=gemma 时只在兜底时才加载，不占启动时间和显存。"""
+    global _whisper
+    if _whisper is None:
+        try:
+            _whisper = WhisperModel(WHISPER_MODEL, device="cuda", compute_type="float16")
+            log.info(f"whisper[{WHISPER_MODEL}]: CUDA")
+        except Exception as e:
+            log.warning(f"whisper CUDA 不可用，回退 CPU: {e}")
+            _whisper = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8", cpu_threads=2)
+    return _whisper
+
+def stt_whisper(pcm) -> str:
+    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    soundfile.write(tmp.name, pcm, SR)
+    # vad_filter=True：whisper 内置 Silero VAD 先剔除非语音区域，抑制噪音幻觉
+    segs, _ = get_whisper().transcribe(tmp.name, language="en", beam_size=3, vad_filter=True)
+    os.unlink(tmp.name)
+    return " ".join(s.text.strip() for s in segs)
+
+async def stt_gemma(pcm) -> str:
+    """整段语音送本地 LLM 的音频输入转写（llama-server 多模态）。"""
+    import io as _io
+    buf = _io.BytesIO()
+    soundfile.write(buf, pcm, SR, format="WAV")
+    payload = {
+        "model": "gemma4",
+        "messages": [{"role": "user", "content": [
+            {"type": "input_audio", "input_audio": {
+                "data": base64.b64encode(buf.getvalue()).decode(), "format": "wav"}},
+            {"type": "text", "text": "Transcribe this English audio exactly. "
+                                     "Output only the transcription. "
+                                     "If the audio contains no clear English speech "
+                                     "(only noise or silence), output nothing."}]}],
+        "max_tokens": 200, "temperature": 0.0,
+    }
+    async with httpx.AsyncClient(timeout=60) as cli:
+        r = await cli.post(LLM, json=payload)
+        r.raise_for_status()
+        raw = r.json()["choices"][0]["message"]["content"] or ""
+    return clean_text(raw).strip('" ').strip()
+
+async def stt(pcm) -> str:
+    if STT_BACKEND == "gemma":
+        try:
+            return await stt_gemma(pcm)
+        except Exception as e:
+            log.warning(f"gemma STT 失败，回退 whisper: {e}")
+    return stt_whisper(pcm)
 kokoro_pipe = KPipeline(lang_code="a")
 try:
     import torch
@@ -72,8 +123,8 @@ except Exception as e:
 log.info("模型就绪")
 
 def clean_text(text):
-    # 剥掉泄漏的特殊 token：<end_of_turn>、<endofturn、<start_of_turn> 等
-    text = re.sub(r'<\s*(start|end)_?of_?turn[^>]*>?', ' ', text, flags=re.IGNORECASE)
+    # 剥掉泄漏的特殊 token：<end_of_turn>、</startofturn、<start_of_turn> 等
+    text = re.sub(r'<\s*/?\s*(start|end)_?of_?turn[^>]*>?', ' ', text, flags=re.IGNORECASE)
     # 剥掉舞台指令/状态描述：(smiles)、(laughing)、（微笑）等，TTS 不应念出来
     text = re.sub(r'\([^)]*\)', ' ', text)
     text = re.sub(r'（[^）]*）', ' ', text)
@@ -88,6 +139,10 @@ class VADBuffer:
         self.frames = []
         self.talking = False
         self.silence_frames = 0
+        self.speech_frames = 0   # 累计超过阈值的样本数（区分真语音和瞬时尖峰）
+        # 说话前的环境音只保留 3 块（0.6s）作 pre-roll——否则长时间噪音会
+        # 混进送 STT 的段里，Gemma 音频转写会对着噪音编造内容
+        self._preroll: deque = deque(maxlen=3)
         self._dbg_max = 0.0
         self._dbg_n = 0
 
@@ -102,27 +157,39 @@ class VADBuffer:
                      f"(threshold={SPEECH_THRESHOLD}, talking={self.talking})")
             self._dbg_max = 0.0
             self._dbg_n = 0
-        self.frames.append(audio)
         if rms > SPEECH_THRESHOLD:
+            if not self.talking:
+                # 段开始：带上 pre-roll 作上下文
+                self.frames = list(self._preroll)
+                self._preroll.clear()
+                self.speech_frames = 0
             self.talking = True
             self.silence_frames = 0
+            self.speech_frames += len(audio)
+            self.frames.append(audio)
         elif self.talking:
             self.silence_frames += len(audio)
+            self.frames.append(audio)
+        else:
+            self._preroll.append(audio)
         return self.talking and self.silence_frames > SR * SILENCE_LIMIT
 
     def get_and_clear(self):
         if not self.frames:
-            return None
+            return None, 0
         audio = np.concatenate(self.frames)
+        speech = self.speech_frames
         self.frames.clear()
         self.talking = False
         self.silence_frames = 0
-        return (audio / 32768.0).astype(np.float32)
+        self.speech_frames = 0
+        return (audio / 32768.0).astype(np.float32), speech
 
 async def handler(ws):
     buf = VADBuffer()
     instructions = ""
     voice = DEFAULT_VOICE
+    speed = 0.9   # TTS 语速，可被 session.update 按角色覆盖
 
     try:
         async for raw in ws:
@@ -133,12 +200,19 @@ async def handler(ws):
                 s = msg.get("session", {})
                 if s.get("instructions"):
                     instructions = s["instructions"]
-                v = (s.get("audio") or {}).get("output", {}).get("voice", "")
+                out = (s.get("audio") or {}).get("output", {})
+                v = out.get("voice", "")
                 if v:
                     nv = map_voice(v)
                     if nv != voice:
                         log.info(f"Voice: {voice} → {nv} (persona voice: {v})")
                         voice = nv
+                sp = out.get("speed")
+                if sp:
+                    ns = max(0.5, min(2.0, float(sp)))
+                    if ns != speed:
+                        log.info(f"Speed: {speed} → {ns} (persona 语速)")
+                        speed = ns
                 await ws.send(json.dumps({"type": "session.created", "session": {"type": "realtime"}}))
 
             elif t == "input_image_buffer.append":
@@ -153,30 +227,30 @@ async def handler(ws):
             elif t == "input_audio_buffer.append":
                 pcm = base64.b64decode(msg.get("audio", ""))
                 if buf.add(pcm):
-                    await process(ws, buf, instructions, voice)
+                    await process(ws, buf, instructions, voice, speed)
 
             elif t == "input_audio_buffer.commit":
-                await process(ws, buf, instructions, voice)
+                await process(ws, buf, instructions, voice, speed)
 
             elif t == "response.cancel":
                 pass
     except websockets.ConnectionClosed:
         pass
 
-async def process(ws, buf, instructions, voice=DEFAULT_VOICE):
-    pcm = buf.get_and_clear()
-    if pcm is None or len(pcm) < SR * 0.3:
+async def process(ws, buf, instructions, voice=DEFAULT_VOICE, speed=0.9):
+    pcm, speech = buf.get_and_clear()
+    # 双保险：整段至少 0.3s，且其中"超过阈值"的音频至少 0.4s——
+    # 单个噪音尖峰（风扇/电流声）凑不够 0.4s，直接丢弃，避免 whisper 对着纯噪音幻觉出句子
+    if pcm is None or len(pcm) < SR * 0.3 or speech < SR * 0.4:
+        if pcm is not None and speech < SR * 0.4:
+            log.info(f"VAD drop: speech={speech/SR:.2f}s < 0.4s（噪音尖峰，不送 STT）")
         return
 
     t0 = time.time()
-    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-    soundfile.write(tmp.name, pcm, SR)
-    segs, _ = whisper.transcribe(tmp.name, language="en", beam_size=3, vad_filter=False)
-    os.unlink(tmp.name)
-    text = " ".join(s.text.strip() for s in segs)
+    text = await stt(pcm)
     if not text:
         return
-    log.info(f"STT({time.time()-t0:.1f}s): {text}")
+    log.info(f"STT[{STT_BACKEND}]({time.time()-t0:.1f}s): {text}")
     await ws.send(json.dumps({"type": "conversation.item.input_audio_transcription.completed", "transcript": text}))
 
     # system prompt：原始 instructions + 场景文本历史（较早的上下文）
@@ -249,14 +323,14 @@ async def process(ws, buf, instructions, voice=DEFAULT_VOICE):
     # 边合成边发：kokoro 逐句产出，首句合成完就开始出声
     total = 0.0
     try:
-        for _gs, _ps, audio in kokoro_pipe(reply, voice=voice, speed=0.9):
+        for _gs, _ps, audio in kokoro_pipe(reply, voice=voice, speed=speed):
             total += len(audio) / 24000
             await send_audio(audio)
     except Exception as e:
         if total == 0:
             # 音色不可用（如离线缓存缺失）时回退默认音色，不让对话中断
             log.warning(f"TTS voice {voice} failed ({e}) — fallback to {DEFAULT_VOICE}")
-            for _gs, _ps, audio in kokoro_pipe(reply, voice=DEFAULT_VOICE, speed=0.9):
+            for _gs, _ps, audio in kokoro_pipe(reply, voice=DEFAULT_VOICE, speed=speed):
                 total += len(audio) / 24000
                 await send_audio(audio)
         else:

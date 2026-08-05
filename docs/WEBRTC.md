@@ -117,12 +117,29 @@ RTC_TOKEN=some-secret
 | `tests/test_rtc_device.py` | 单元 | 重采样对齐、mic FIFO/增益/电平、spk 环形缓冲/欠载补零、viseme 调度、帧拷贝语义 | 无 |
 | `tests/test_rtc_loopback.py` | 进程内回环 | 第二个 `RTCPeerConnection` 模拟浏览器（正弦波假 mic + 绿屏假摄像头），走完真实 offer/answer/ICE/DTLS，验证 mic 上行、TTS 下行、viseme、摄像头帧四条链路 | 无（走真实 UDP/ICE，耗时几秒） |
 | `tests/test_rtc_signaling.py` | HTTP 端到端 | 8299 端口真实起 uvicorn，测 409（未启用 RTC）、完整握手、400（畸形 body） | `httpx`、本地端口 |
+| `tests/test_rtc_browser.py` | **真实浏览器** | headless Chrome（假麦克风/摄像头设备）打开真实 `face_preview.html?device=1` 页面并点击开始，验证：页面连接状态、服务端 peer、mic 上行有声、摄像头帧、浏览器 RTP 统计（TTS 下行字节 > 0） | `playwright` + 系统 Chrome |
 
 ```bash
 .venv/bin/python tests/test_rtc_device.py
 .venv/bin/python tests/test_rtc_loopback.py
 .venv/bin/python tests/test_rtc_signaling.py
+.venv/bin/python tests/test_rtc_browser.py   # 最接近真实设备的自动化验证
 ```
+
+### 物理设备手动验证清单
+
+真实手机/平板上的验证步骤（自动化无法覆盖的部分：硬件权限弹窗、真实麦克风回声消除、移动网络抖动）：
+
+1. 配置 TLS（`DASHBOARD_TLS_CERT/KEY`，mkcert 签发并在手机上信任根证书）
+2. 启动：`.venv/bin/python camera_tutor/realtime_demo.py --av-source webrtc`
+3. 手机浏览器打开 `https://<agent-ip>:8200/static/face_preview.html?device=1`，点开始
+4. 逐项确认：
+   - [ ] 权限弹窗正常授予麦克风+摄像头
+   - [ ] 页面显示"🟢 设备已连接"，RTC 指示灯亮
+   - [ ] 对手机说话，agent 日志出现 STT 结果
+   - [ ] 手机扬声器能听到 Emma 回复，Live2D 唇形基本同步
+   - [ ] 锁屏/切后台后回前台，2 秒内自动重连恢复
+   - [ ] Wi-Fi 信号弱/切换网络时的表现（当前预期：断线重连，可能需重开页面）
 
 ## 6. 已知边界与待办
 
@@ -133,9 +150,28 @@ RTC_TOKEN=some-secret
 - [ ] **单 peer**：新连接顶掉旧连接，不支持多设备同时接入
 - [ ] **无 RTCDataChannel**：控制信令复用 WebSocket `/ws/emma/face`（设计选择，
       但若未来要走数据通道需新增通路）
-- [ ] **真实设备验证程度未知**：三层测试全部通过，但落地后无迭代记录，
-      在真实手机/平板浏览器上的表现未经系统验证
+- [x] ~~真实设备验证程度未知~~ **自动化真实浏览器验证已通过**（2026-08-05，
+      `tests/test_rtc_browser.py`：真实 Chrome + 真实页面全链路通过）；
+      物理手机/平板的手动验证仍待执行，见第 5 节清单
 - [ ] 前端设备页与 Live2D 预览同页，尚不能独立作为"纯设备"轻量页面
+
+### 已修复问题记录（2026-08-05 真机联调）
+
+- **双重 offer 竞态**：页面重连发两次 offer 时，旧 peer 的迟到收尾事件会把新连接的
+  `_peer_connected` 清掉——mic 正常但 `write_spk` 全部丢弃（对端无声）。
+  修复：旧连接的 track 收尾 / connectionstatechange 事件按身份忽略；
+  `connected` 状态时复位标志（`rtc_device.py`）。
+- **唇形不动**：开 TLS 后 `face_sync.py` 硬编码的 `ws://`/`http://` 推送全部失败
+  （WS 握手失败 + HTTP fallback 端点不存在且异常被静默吞掉）。
+  修复：按 `DASHBOARD_TLS_CERT/KEY` 自动切换 `wss/https`。
+- **浏览器 DSP 破坏 ASR**：Chrome 默认 AGC 把噪音底放大到 RMS VAD 阈值之上
+  （whisper 对着噪音幻觉出完整句子），`noiseSuppression` 会把小声语音当噪音吃掉。
+  修复：`getUserMedia` 显式 `autoGainControl: false, noiseSuppression: false`，
+  保留 `echoCancellation` 防外放回采；服务端配合 `MIC_GAIN` 数字增益补偿 +
+  `VAD_THRESHOLD` 按干净噪音底下调。
+- **部署注意**：dashboard 开 TLS 后，本机健康检查等硬编码 `http://localhost:8200`
+  的调用会失败——端口被残留实例占用时新实例的 uvicorn 绑定失败退出，
+  排查先看 `ss -tlnp | grep 8200` 确认没有旧进程。
 
 文档维护说明：本文件随 `rtc_device.py` / 信令端点 / 前端设备模式的行为变化同步更新；
 上述待办项完成一项勾掉一项。

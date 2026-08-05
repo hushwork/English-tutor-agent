@@ -581,15 +581,24 @@ python3 camera_tutor/realtime_demo.py --reset-devices
 ## 本地部署
 
 ```bash
+# 一键启停（llama-server + dashboard + local_pipe + realtime_demo）
+bash scripts/start-all.sh start | status | stop
+```
+
+手动分步：
+
+```bash
 # 1. 启动 LLM（Gemma E4B 或 Qwen3-VL）
 bash scripts/start-llm.sh e4b
 
 # 2. 启动语音管线
-CUDA_VISIBLE_DEVICES="" nohup .venv/bin/python3 scripts/local_pipe.py > logs/pipe.log 2>&1 &
+nohup .venv/bin/python3 scripts/local_pipe.py > logs/local_pipe.log 2>&1 &
 
 # 3. 运行
-python camera_tutor/realtime_demo.py --select-devices
+.venv/bin/python camera_tutor/realtime_demo.py --select-devices
 ```
+
+日志说明、VAD/MIC_GAIN 调参、音频诊断与常见排障见 [docs/LOCAL_DEPLOYMENT_PLAN.md](docs/LOCAL_DEPLOYMENT_PLAN.md)。
 
 三种模式：`DEPLOY_MODE=cloud|local|gemma`（.env 切换）
 详细文档：[docs/LOCAL_DEPLOYMENT_PLAN.md](docs/LOCAL_DEPLOYMENT_PLAN.md)

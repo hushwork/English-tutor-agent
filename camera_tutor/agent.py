@@ -332,7 +332,8 @@ class CameraTutorAgent:
         )
 
         # Run connection loop (blocks until stop)
-        logger.info("Connecting to %s ...", self.config.model)
+        mode = "本地 local_pipe" if local_mode else "云端 MaaS"
+        logger.info("Connecting to %s [%s] ...", ws_url, mode)
         self.connection.start()
 
     def stop(self) -> None:

@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import fractions
 import logging
+import os
 import threading
 import time
 from collections import deque
@@ -31,7 +32,9 @@ from typing import Callable, Optional
 
 import av
 import numpy as np
-from aiortc import RTCPeerConnection, RTCSessionDescription
+from aiortc import (
+    RTCConfiguration, RTCIceServer, RTCPeerConnection, RTCSessionDescription,
+)
 from aiortc.mediastreams import AudioStreamTrack, MediaStreamError
 
 from camera_tutor.audio_manager import (
@@ -47,6 +50,48 @@ SPK_SAMPLES_PER_TICK = 480                  # 20ms @ 24kHz (resampled to 960)
 MIC_READ_BYTES = MIC_READ_FRAMES * 2        # 200ms @ 16kHz int16
 
 DEFAULT_VISME_LEAD_MS = 80
+
+
+def ice_servers() -> list[dict]:
+    """ICE server 配置（env 驱动），dict 形式，aiortc 和浏览器端（/rtc/config）
+    共用同一份。LAN 模式默认空（仅 host candidate）；公网访问时服务器藏在
+    NAT 后，host candidate 不可达，必须配 TURN 中转：
+
+      RTC_TURN_URL=turn:1.2.3.4:3478  RTC_TURN_USER=...  RTC_TURN_PASS=...
+      RTC_STUN_URL=stun:1.2.3.4:3478  （可选，一般不必）
+    """
+    servers: list[dict] = []
+    stun = os.environ.get("RTC_STUN_URL", "")
+    if stun:
+        servers.append({"urls": [stun]})
+    turn = os.environ.get("RTC_TURN_URL", "")
+    if turn:
+        servers.append({
+            "urls": [turn],
+            "username": os.environ.get("RTC_TURN_USER", ""),
+            "credential": os.environ.get("RTC_TURN_PASS", ""),
+        })
+    return servers
+
+
+def _rtc_configuration() -> RTCConfiguration:
+    return RTCConfiguration(
+        iceServers=[RTCIceServer(**s) for s in ice_servers()])
+
+
+def browser_ice_servers() -> list[dict]:
+    """给浏览器的 ICE 配置：TURN 若只配了 TCP（本机网络 UDP 被封的无奈之举），
+    给浏览器补上 UDP 变体——对端网络通常不封 UDP，UDP 优先、TCP 兜底。"""
+    servers = []
+    for s in ice_servers():
+        s = dict(s)
+        s["urls"] = urls = list(s["urls"])
+        for u in urls:
+            if u.startswith("turn:") and "transport=tcp" in u:
+                s["urls"] = [u.split("?")[0], u]
+                break
+        servers.append(s)
+    return servers
 
 
 # ── Resampling helpers ────────────────────────────────────────────
@@ -502,7 +547,7 @@ class RTCDeviceManager:
                 logger.info("RTC: new offer — closing previous peer")
                 await self._close_pc()
 
-            pc = RTCPeerConnection()
+            pc = RTCPeerConnection(configuration=_rtc_configuration())
             self._pc = pc
 
             @pc.on("track")

@@ -14,6 +14,14 @@
   #camera { position:fixed; top:12px; right:12px; width:160px; border-radius:8px; border:2px solid #2a2d3a; opacity:0.85; z-index:100; display:none; }
   #startOverlay { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(15,17,23,.85); z-index:200; }
   #startOverlay button { font:16px sans-serif; padding:14px 32px; border-radius:10px; border:none; background:#4ecf8d; color:#0f1117; cursor:pointer; }
+
+  /* 移动端适配 */
+  @media (max-width: 600px) {
+    #info { bottom:8px; max-width:94vw; font-size:12px; gap:8px; flex-wrap:wrap; justify-content:center; }
+    #status { max-width:60vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    #localCam, #camera { width:26vw !important; max-width:120px; top:8px; right:8px; }
+    #startOverlay button { font-size:18px; padding:18px 44px; }
+  }
 </style>
 </head>
 <body>
@@ -81,7 +89,15 @@ async function startDevice() {
   localCam.srcObject = stream;
   localCam.style.display = 'block';
 
-  const pc = new RTCPeerConnection();   // LAN: no STUN/TURN needed
+  // LAN 下服务端未配 TURN 时返回空 iceServers，等价于之前的无参构造；
+  // 公网/CGNAT 下（手机蜂窝）必须靠这里拿到 STUN/TURN 才能打通
+  let rtcCfg = {};
+  try {
+    const h = RTC_TOKEN ? { 'Authorization': 'Bearer ' + RTC_TOKEN } : {};
+    const r = await fetch('/rtc/config', { headers: h });
+    if (r.ok) rtcCfg = await r.json();
+  } catch (e) { /* 配置拉取失败按 LAN 模式继续 */ }
+  const pc = new RTCPeerConnection(rtcCfg);
   window._rtcPC = pc;                   // exposed for diagnostics/e2e tests
   stream.getTracks().forEach(t => pc.addTrack(t, stream));
   pc.ontrack = (ev) => {

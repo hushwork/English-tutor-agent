@@ -33,9 +33,12 @@ WebRTC 模式不改任何对话逻辑，而是用三个 duck-typed 类替换本�
 - 方式：**HTTP 一次性 offer/answer**（非 WebSocket）。
   浏览器 POST SDP offer 到 `POST /rtc/offer`（`dashboard_server.py:375`），同步返回 answer。
 - 前端不 Trickle：先等 ICE gathering 完成再发 offer（`face_preview.html:98`）。
-- 无 STUN/TURN：**仅限局域网**（`face_preview.html:81`）。
-- 可选鉴权：环境变量 `RTC_TOKEN` 设置后，`/rtc/offer` 要求 `Authorization: Bearer <token>`；
-  页面侧用 `?token=xxx` 传递。
+- ICE 配置：默认无 STUN/TURN（局域网直连）；公网部署时用 env 配置 TURN
+  （`rtc_device.py: ice_servers()`），**浏览器端通过 `GET /rtc/config` 动态拉取同一份
+  配置**，不在页面里硬编码。移动端浏览器在运营商 CGNAT 后只有内网 candidate，
+  不配 TURN 必然打不通（2026-08-06 实锤）。
+- 可选鉴权：环境变量 `RTC_TOKEN` 设置后，`/rtc/offer` 和 `/rtc/config` 均要求
+  `Authorization: Bearer <token>`；页面侧用 `?token=xxx` 传递。
 - 单 peer：新 offer 会顶掉旧连接（`rtc_device.py:481-483`）。
 - **dashboard 必须与 agent 同进程**：RTC manager 通过模块级注册表
   （`set_rtc_manager`）在同进程内共享。若端口已被独立 dashboard 占用，
@@ -105,8 +108,28 @@ RTC_TOKEN=some-secret
 |------|------|------|
 | `AV_SOURCE` | `local` | `webrtc` 启用远程设备模式 |
 | `VISME_LEAD_MS` | 80 | 唇形同步补偿（毫秒） |
-| `RTC_TOKEN` | 空（不鉴权） | `/rtc/offer` 的 Bearer 令牌 |
+| `RTC_TOKEN` | 空（不鉴权） | `/rtc/offer`、`/rtc/config` 的 Bearer 令牌 |
 | `DASHBOARD_TLS_CERT` / `DASHBOARD_TLS_KEY` | 空 | HTTPS 证书（远程浏览器必需） |
+| `RTC_TURN_URL` / `RTC_TURN_USER` / `RTC_TURN_PASS` | 空 | 公网穿透的 TURN 中转（coturn）。支持 `?transport=tcp` 后缀 |
+| `RTC_STUN_URL` | 空 | STUN（可选，一般有 TURN 即可） |
+
+### 公网部署（frp + coturn）
+
+内网穿透的完整姿势（2026-08-06 落地）：
+
+1. **页面/信令**：frps 架在公网服务器，本地 frpc 把 8200 映射出去
+   （TCP 隧道即可，WebRTC 信令是 HTTP）
+2. **媒体**：coturn 架在**同一台或另一台**公网服务器，
+   `.env` 配 `RTC_TURN_URL=turn:<ip>:3478` + 账号密码，浏览器和 agent 自动共用
+3. **证书**：mkcert 签发的证书 SAN 要包含公网 IP，否则浏览器报域名不匹配
+4. coturn 在云主机（公网 IP 是 NAT 映射）上必须配
+   `external-ip=<公网IP>/<内网IP>`，只写公网 IP 不生效
+   （relay candidate 会错误地宣告内网地址）
+5. **网络封 UDP 的环境**（实测某些家用宽带出公网 UDP 全被拦，连 DNS 都不通）：
+   `RTC_TURN_URL` 加 `?transport=tcp`。浏览器端不受影响——`/rtc/config`
+   下发时会自动补 UDP 变体（UDP 优先、TCP 兜底，见 `browser_ice_servers()`）
+6. TURN relay 端口段（默认配置 50000-50100 UDP）和 3478 TCP/UDP
+   都要在云防火墙/安全组放行
 
 ## 5. 测试
 
@@ -145,15 +168,32 @@ RTC_TOKEN=some-secret
 
 当前版本的明确限制（后续按需更新本节）：
 
-- [ ] **仅局域网**：无 STUN/TURN，跨网段 / NAT 环境不可用
+- [x] ~~**仅局域网**：无 STUN/TURN，跨网段 / NAT 环境不可用~~
+      **已支持 TURN 中转**（2026-08-06，`RTC_TURN_*` env + `/rtc/config` 下发，
+      手机蜂窝 CGNAT 环境实测连通）
 - [ ] **无 ICE 重启 / Trickle ICE**：网络切换（Wi-Fi ↔ 蜂窝）后只能靠前端整体重连
 - [ ] **单 peer**：新连接顶掉旧连接，不支持多设备同时接入
 - [ ] **无 RTCDataChannel**：控制信令复用 WebSocket `/ws/emma/face`（设计选择，
       但若未来要走数据通道需新增通路）
 - [x] ~~真实设备验证程度未知~~ **自动化真实浏览器验证已通过**（2026-08-05，
       `tests/test_rtc_browser.py`：真实 Chrome + 真实页面全链路通过）；
-      物理手机/平板的手动验证仍待执行，见第 5 节清单
+      物理手机手动验证已通过（2026-08-06，蜂窝网络 + TURN 中转全链路）
 - [ ] 前端设备页与 Live2D 预览同页，尚不能独立作为"纯设备"轻量页面
+
+### 已修复问题记录（2026-08-06 公网部署）
+
+- **服务器在 NAT 后，host candidate 不可达**：远程浏览器只能拿到服务器的内网
+  candidate，ICE 全部失败。修复：coturn TURN 中转（`RTC_TURN_*` env 注入 aiortc）。
+- **手机在运营商 CGNAT 后**：浏览器无 STUN/TURN 时只报 `10.x` 内网 candidate，
+  服务器 relay 也路由不到。修复：`GET /rtc/config` 给浏览器下发同一份 ICE 配置。
+- **家用宽带封死出公网 UDP**（连公共 DNS UDP 都不通）：TURN over UDP 无响应。
+  修复：`RTC_TURN_URL` 用 `?transport=tcp`；浏览器端自动补 UDP 变体。
+- **coturn relay 宣告内网地址**：云主机公网 IP 是 1:1 NAT 映射，
+  `external-ip` 只写公网 IP 不生效，必须 `external-ip=<公网>/<内网>` 显式映射。
+- **移动端页面未适配**：状态栏溢出、摄像头窗过大。修复：`face_preview.html`
+  加 `@media (max-width: 600px)` 适配。
+- **部署注意**：`pkill` realtime_demo 后要**等旧进程完全退出**（优雅退出约 9 秒）
+  再跑 `start-all.sh`，否则脚本 pgrep 误判"已在运行"而跳过启动，服务实际没起来。
 
 ### 已修复问题记录（2026-08-05 真机联调）
 

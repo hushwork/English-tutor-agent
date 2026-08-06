@@ -403,6 +403,23 @@ async def rtc_offer(request: Request):
     return await manager.handle_offer(sdp, offer_type)
 
 
+@app.get("/rtc/config")
+async def rtc_config(request: Request):
+    """返回浏览器端 RTCPeerConnection 的 ICE 配置。
+
+    手机等在运营商 CGNAT 后的浏览器只有内网 host candidate，必须配
+    STUN/TURN 才能打通。与 /rtc/offer 共用 RTC_TOKEN 鉴权。
+    """
+    token = os.environ.get("RTC_TOKEN", "")
+    if token:
+        auth = request.headers.get("Authorization", "")
+        if auth != f"Bearer {token}":
+            raise HTTPException(status_code=401, detail="invalid RTC token")
+
+    from camera_tutor.rtc_device import browser_ice_servers
+    return {"iceServers": browser_ice_servers()}
+
+
 # ── Main ────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

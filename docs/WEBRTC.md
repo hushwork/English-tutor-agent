@@ -115,6 +115,8 @@ RTC_TOKEN=some-secret
 
 ### 公网部署（frp + coturn）
 
+> 完整的 frps/frpc/coturn/证书配置与运维备忘见 [PUBLIC_ACCESS.md](PUBLIC_ACCESS.md)。
+
 内网穿透的完整姿势（2026-08-06 落地）：
 
 1. **页面/信令**：frps 架在公网服务器，本地 frpc 把 8200 映射出去

@@ -303,7 +303,13 @@ class CameraTutorAgent:
         )
         with self._sessions_lock:
             self._sessions[rtc_session.session_id] = session
-        session.start()
+        # start() 必须在独立线程跑：本钩子运行在 uvicorn 事件循环上，
+        # 而 PracticeSession.start() 里的 face_sync 会同步阻塞连 dashboard
+        # 的 WS——同循环自连会互相等待直到超时（表现为 viseme/字幕全丢）。
+        threading.Thread(
+            target=session.start, daemon=True,
+            name=f"session-start-{rtc_session.user_id}",
+        ).start()
         logger.info("Practice session up: user=%s session=%s (%d active)",
                     rtc_session.user_id, rtc_session.session_id,
                     len(self._sessions))
@@ -313,7 +319,11 @@ class CameraTutorAgent:
         with self._sessions_lock:
             session = self._sessions.pop(rtc_session.session_id, None)
         if session is not None:
-            session.stop()
+            # stop() 会 join 若干线程（秒级），同样不能阻塞事件循环
+            threading.Thread(
+                target=session.stop, daemon=True,
+                name=f"session-stop-{rtc_session.user_id}",
+            ).start()
             logger.info("Practice session down: user=%s session=%s (%d active)",
                         rtc_session.user_id, rtc_session.session_id,
                         len(self._sessions))

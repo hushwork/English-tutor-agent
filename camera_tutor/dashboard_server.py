@@ -482,6 +482,17 @@ async def reset_emma_face():
     }))
     return {"ok": True}
 
+@app.post("/api/emma/face")
+async def push_face_event(data: dict):
+    """FaceSyncManager 的 HTTP 兜底通道（WS 不可用时 POST viseme 事件到这里）。
+
+    与 /ws/emma/source 等价：按 user_id 路由转发给浏览器端 /ws/emma/face。
+    """
+    import asyncio
+    asyncio.create_task(_broadcast_event(data))
+    return {"ok": True}
+
+
 @app.websocket("/ws/emma/face")
 async def ws_emma_face(websocket: WebSocket):
     """Browser clients — receives typed events: {"type":"viseme",...} {"type":"camera",...}

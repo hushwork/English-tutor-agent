@@ -56,7 +56,10 @@ start() {
   wait_port 8765 local_pipe || return 1
 
   # 4) 主程序（设备选择自动从 .camera-tutor-data/devices.json 按名字恢复）
-  if ! pgrep -f 'camera_tutor/realtime_demo.py' > /dev/null; then
+  #    注意：pgrep/pkill 模式必须含 "bin/python" 前缀——裸的
+  #    'camera_tutor/realtime_demo.py' 会匹配到调用方 shell 自己的命令行
+  #    （比如嵌在别的命令里执行本脚本时），误判"已在运行"而跳过启动
+  if ! pgrep -f 'bin/python.*camera_tutor/realtime_demo\.py' > /dev/null; then
     local av_args=""
     [ "$webrtc" = 1 ] && av_args="--av-source webrtc"
     nohup $PY camera_tutor/realtime_demo.py $av_args > $LOGS/realtime_demo.log 2>&1 &
@@ -64,14 +67,14 @@ start() {
   fi
   echo "✅ realtime_demo 已启动"
   if [ "$webrtc" = 1 ]; then
-    echo "   📱 设备端: https://$(hostname -I | awk '{print $1}'):8200/static/face_preview.html?device=1"
+    echo "   📱 设备端: https://$(hostname -I | awk '{print $1}'):8200/?device=1"
   else
-    echo "   Emma 形象: http://$(hostname -I | awk '{print $1}'):8200/static/face_preview.html"
+    echo "   Emma 形象: http://$(hostname -I | awk '{print $1}'):8200/"
   fi
 }
 
 stop() {
-  pkill -f 'camera_tutor/realtime_demo.py' 2>/dev/null
+  pkill -f 'bin/python.*camera_tutor/realtime_demo\.py' 2>/dev/null
   PID=$(ss -tlnp 2>/dev/null | grep ':8765 ' | grep -oE 'pid=[0-9]+' | cut -d= -f2 | head -1)
   [ -n "$PID" ] && kill "$PID" 2>/dev/null
   PID=$(ss -tlnp 2>/dev/null | grep ':8200 ' | grep -oE 'pid=[0-9]+' | cut -d= -f2 | head -1)
@@ -85,7 +88,7 @@ status() {
   ss -tln | grep -q ':8080 ' && echo "✅ llama-server :8080" || echo "❌ llama-server"
   ss -tln | grep -q ':8200 ' && echo "✅ dashboard    :8200" || echo "❌ dashboard"
   ss -tln | grep -q ':8765 ' && echo "✅ local_pipe   :8765" || echo "❌ local_pipe"
-  pgrep -f 'camera_tutor/realtime_demo.py' > /dev/null && echo "✅ realtime_demo" || echo "❌ realtime_demo"
+  pgrep -f 'bin/python.*camera_tutor/realtime_demo\.py' > /dev/null && echo "✅ realtime_demo" || echo "❌ realtime_demo"
 }
 
 case "${1:-start}" in

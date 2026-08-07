@@ -233,7 +233,7 @@ class CameraTutorAgent:
         if self.config.av_source == "webrtc":
             scheme = "https" if os.environ.get("DASHBOARD_TLS_CERT") else "http"
             print(f"   🌐 WebRTC 多用户模式：等待浏览器接入 "
-                  f"{scheme}://localhost:{self.config.dashboard_port}/static/face_preview.html?device=1")
+                  f"{scheme}://localhost:{self.config.dashboard_port}/?device=1")
             print("   [Ctrl+C 退出]\n")
             while self.state.running:
                 time.sleep(0.5)

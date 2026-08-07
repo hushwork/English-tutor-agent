@@ -164,12 +164,19 @@ STATIC_DIR.mkdir(exist_ok=True)
 # Mount static files (face_preview.html, etc.)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+# face_preview（练习/Live2D 界面）是主界面，挂在根路径；
+# 家长 dashboard 是次要页面，挂在 /dashboard。
+# 注意：切换/离开 face_preview 页面会卸载 mic/camera/WebRTC 会话，
+# 所以练习页里的设置入口一律开新标签页，不做页内跳转。
 @app.get("/")
+async def serve_practice_page():
+    """主界面：练习页（face_preview）。"""
+    return HTMLResponse((STATIC_DIR / "face_preview.html").read_text())
+
+
+@app.get("/dashboard")
 async def serve_dashboard():
-    """Serve the parent dashboard SPA."""
-    return HTMLResponse((STATIC_DIR / "index.html").read_text())
-async def serve_dashboard():
-    """Serve the parent dashboard SPA."""
+    """次要页面：家长 dashboard SPA。"""
     index_path = STATIC_DIR / "index.html"
     if index_path.exists():
         return HTMLResponse(index_path.read_text())

@@ -1,5 +1,6 @@
 """本地语音管线 — whisper（WHISPER_MODEL 可选 base/small/...）+ Kokoro TTS + 视觉"""
-import os
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # 项目根目录（camera_tutor 包）
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 import huggingface_hub

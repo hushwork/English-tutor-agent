@@ -1,8 +1,12 @@
 # 拒识与唤醒词规划（Command Rejection / Wake-word Gating）
 
-> 状态：**方案讨论稿，无实现需求**（2026-08-07 记录）
+> 状态：**方案 A/B 均已实现为独立模块，待集成**（2026-08-07）
 > 触发场景：参考车载大模型的"拒识"能力——系统对普通语音不响应，
 > 只对可手动配置的特殊指令响应。
+>
+> 实现：`camera_tutor/command_filter.py`（方案 A 文本门禁）、
+> `camera_tutor/voice_gate.py`（A/B 统一门禁，配置文件选模式）。
+> 测试：`tests/test_command_filter.py`（27 项）、`tests/test_voice_gate.py`（21 项）。
 
 ## 1. 现状
 
@@ -68,22 +72,32 @@ STT 之后是唯一现实的文本门禁位置——拒识判断的是内容，
 
 ### 3.5 配置设计（复用音频开关的模式）
 
-- 存储：`.camera-tutor-data/command_filter.json`
-- API：`GET/POST /api/command-filter`
-- UI：dashboard Device 标签页编辑区（开关 + 指令列表 + 激活窗口 + 未命中行为）
-- **按导师（persona）维度配置**：Grace 面试场景不需要拒识，儿童陪伴需要
+**已实现**（`camera_tutor/voice_gate.py`）：统一配置文件
+`.camera-tutor-data/voice_gate.json`，`mode` 字段选择方案：
 
 ```json
 {
-  "enabled": false,
-  "mode": "command",            // command=整句须命中 | prefix=以前缀开头即放行
-  "commands": ["what's this", "sing a song"],
-  "wake_prefixes": ["emma"],
-  "activation_window_s": 10,
-  "on_reject": "canned_reply",  // silent | canned_reply | escalate
-  "fuzzy_tolerance": 1
+  "mode": "off",                  // off | text(方案A) | kws(方案B) | kws+text(叠加)
+  "text": {                        // 方案 A 配置（command_filter）
+    "enabled": true,
+    "mode": "command",            // command=整句须命中 | prefix=以前缀开头即放行
+    "commands": ["what's this", "sing a song"],
+    "wake_prefixes": ["emma"],
+    "activation_window_s": 10,
+    "on_reject": "canned_reply",  // silent | canned_reply | escalate
+    "fuzzy_tolerance": 1
+  },
+  "kws": {                         // 方案 B 配置（openWakeWord）
+    "model_paths": [],            // .onnx 模型路径，空=内置模型
+    "threshold": 0.5,
+    "activation_window_s": 10,
+    "score_cooldown_s": 1.0
+  }
 }
 ```
+
+集成后的配套（待做）：`GET/POST /api/voice-gate` + dashboard 编辑区。
+指令表建议按导师（persona）维度区分：Grace 面试场景不需要拒识，儿童陪伴需要。
 
 ## 4. 方案 B：KWS 唤醒词小模型
 
@@ -136,11 +150,11 @@ STT 之后是唯一现实的文本门禁位置——拒识判断的是内容，
 
 ## 6. 分期规划
 
-| 阶段 | 内容 | 产出 |
+| 阶段 | 内容 | 状态 |
 |------|------|------|
-| P0 | **数据评估**：回放 `logs/local_pipe.log` 历史转写，模拟不同指令表/匹配策略下的拒识率与误拒识率 | 可行性报告 + 阈值建议 |
-| P1 | 文本门禁：拒识模块 + `/api/command-filter` + dashboard 编辑区 | 可手动配置的指令拒识 |
-| P2 | KWS 唤醒词：openWakeWord 训练 "Hey Emma"，接入音频入口门控 | 常开低功耗唤醒 |
-| P3 | （可选）有限语法命令层：Rhino 或等价方案 | 声学级指令拒识 |
+| P0 | **数据评估**：回放 `logs/local_pipe.log` 历史转写，模拟不同指令表/匹配策略下的拒识率与误拒识率 | 待做 |
+| P1 | 文本门禁模块（command_filter） | **已实现**（27 项单测），待集成：local_pipe STT 后挂 check() + `/api/voice-gate` + dashboard 编辑区 |
+| P2 | KWS 唤醒词门禁（voice_gate kws 模式，openWakeWord 后端） | **框架已实现**（21 项单测），待做：`pip install openwakeword` + 训练/获取唤醒词模型 + 接入 local_pipe 音频入口 |
+| P3 | （可选）有限语法命令层：Rhino 或等价方案 | 未开始 |
 
-P0 是纯分析工作，不碰线上链路，随时可做；P1 起才涉及实现。
+P0 是纯分析工作，不碰线上链路，随时可做。

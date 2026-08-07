@@ -2,6 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<!-- 页面同时挂在 / 和 /static/face_preview.html 两个路径下；
+     Live2D 资源（含 bundle.js 内部的模型/着色器 fetch）都是相对路径，
+     统一按 /static/ 解析，否则从 / 访问时全部 404、卡通形象不显示 -->
+<base href="/static/">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>English Tutor — Live2D</title>
 <style>

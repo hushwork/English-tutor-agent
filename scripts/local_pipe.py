@@ -92,12 +92,19 @@ def _gate_feeds(gate, pcm_bytes) -> bool:
     """KWS 音频门：返回 False 表示未唤醒，音频应丢弃。异常时放行（不影响对话）。"""
     global _gate_error_logged
     try:
-        return gate.feed_audio(np.frombuffer(pcm_bytes, dtype=np.int16))
+        open_now = gate.feed_audio(np.frombuffer(pcm_bytes, dtype=np.int16))
     except Exception as e:
         if not _gate_error_logged:   # 每进程只报一次，避免刷日志
             _gate_error_logged = True
             log.warning(f"voice gate 音频门异常，持续放行: {e}")
         return True
+    # 门开/关转换时打日志（首次静默不刷"门关"）
+    was = getattr(gate, "_logged_door", None)
+    if open_now != was and not (was is None and not open_now):
+        gate._logged_door = open_now
+        log.info("KWS 门开（唤醒词检出，开始放行音频）" if open_now
+                 else "KWS 门关（激活窗口超时，回到只听唤醒词）")
+    return open_now
 
 _reload_gate_if_changed(force=True)
 

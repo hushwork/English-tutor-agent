@@ -158,7 +158,16 @@ class VoiceGate:
         B 用户开门，两路音频的帧还会交错进同一打分缓冲，互相污染。
         """
         if self.config.mode in (MODE_KWS, MODE_KWS_TEXT):
-            self._get_detector()   # 确保模型只在模板实例上加载一次
+            # 确保模型只加载一次、各会话共享。加载失败绝不能抛出——
+            # 否则 local_pipe 的 WS handler 建连即死（1011 重连循环）；
+            # detector 保持 None，后续 feed_audio 的惰性加载由
+            # _gate_feeds 捕获异常并 fail-open 放行
+            try:
+                self._get_detector()
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "KWS 检测器加载失败，本进程门禁 fail-open: %s", e)
         return VoiceGate(self.config, detector=self._detector)
 
     def _get_detector(self) -> KwsDetector:

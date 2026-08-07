@@ -508,6 +508,10 @@ class RTCFrameSource:
         except Exception as e:
             logger.warning("RTC camera consume error: %s", e)
         finally:
+            # 清掉残留的最后一帧：否则 peer 断开后 read_frame 仍返回陈旧帧，
+            # vision reader 会对着静止画面全速空转编码（CPU 满载）
+            with self._lock:
+                self._latest = None
             logger.info("RTC camera track ended")
 
     def read_frame(self) -> tuple[bool, Optional[np.ndarray]]:

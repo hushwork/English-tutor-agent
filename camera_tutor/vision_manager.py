@@ -141,6 +141,10 @@ class VisionManager:
                 b64 = base64.b64encode(jpg).decode()
                 with self._frame_lock:
                     self._latest_b64 = b64
+                # RTC 模式下 read_frame 即取即走（不阻塞），必须限速，
+                # 否则对同一帧全速 resize+编码空转（CPU 满载）；
+                # 本地摄像头模式本就有帧率阻塞，此 sleep 无影响
+                time.sleep(0.05)
             except Exception as e:
                 logger.warning("Camera reader error: %s", e)
                 time.sleep(0.05)

@@ -154,7 +154,7 @@ STT 之后是唯一现实的文本门禁位置——拒识判断的是内容，
 |------|------|------|
 | P0 | **数据评估**：回放 `logs/local_pipe.log` 历史转写，模拟不同指令表/匹配策略下的拒识率与误拒识率 | 待做 |
 | P1 | 文本门禁（command_filter + voice_gate text 模式） | **已完成**（2026-08-07）：模块 + local_pipe 集成（STT 后 check_text，拒识话术直接 TTS）+ `/api/voice-gate` + dashboard Device 页编辑区；配置 mtime 热重载，默认 off 对现有对话零影响 |
-| P2 | KWS 唤醒词门禁（voice_gate kws 模式，openWakeWord 后端） | **框架已接入**：local_pipe 音频入口 feed_audio 门控（未唤醒丢音频，异常时 fail-open 不影响对话）；待做：`pip install openwakeword` + 训练/获取唤醒词模型 |
+| P2 | KWS 唤醒词门禁（voice_gate kws 模式，openWakeWord 后端） | **框架已接入 + 依赖就绪**（2026-08-07）：local_pipe 音频入口 feed_audio 门控（未唤醒丢音频，异常时 fail-open 不影响对话）；openwakeword 0.6.0 已装（`pip install --no-deps openwakeword==0.6.0`——py3.14 无 tflite-runtime wheel，onnxruntime 已够用）；内置模型 `hey_jarvis_v0.1.onnx` + 共享特征模型已下载（GitHub 被墙，走 ghfast.top 镜像放入 `.venv/.../openwakeword/resources/models/`），kws 模式实测可用。待做：训练自定义唤醒词（如 "Hey Emma"），把模型路径写进 `voice_gate.json` 的 `kws.model_paths` |
 | P3 | （可选）有限语法命令层：Rhino 或等价方案 | 未开始 |
 
 P0 是纯分析工作，不碰线上链路，随时可做。

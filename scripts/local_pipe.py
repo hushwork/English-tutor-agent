@@ -17,7 +17,9 @@ import httpx, soundfile
 from dotenv import load_dotenv
 load_dotenv()
 
-from camera_tutor.voice_gate import VoiceGate, VoiceGateConfig
+from camera_tutor.voice_gate import (
+    VoiceGate, VoiceGateConfig, MODE_KWS, MODE_KWS_TEXT,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [PIPE] %(message)s")
 log = logging.getLogger("pipe")
@@ -64,6 +66,7 @@ class ConnState:
         self.frame_buffer: deque[str] = deque(maxlen=FRAME_BUF_SIZE)
         self.scene_history: deque[str] = deque(maxlen=SCENE_HISTORY_SIZE)
         self.last_frame = {"img": None, "probed": True}
+        self.gate = None   # 本连接的 voice gate（scene_prober 据此在门关闭时停分析）
 
 # ── 语音门禁（方案 A 文本拒识 / 方案 B KWS 唤醒，voice_gate.json 选模式） ──
 # 默认 off，对现有对话零影响；dashboard 改配置后按文件 mtime 热重载，无需重启。
@@ -301,6 +304,7 @@ async def handler(ws):
     # 全局 GATE 只是配置模板，热重载后（mtime 变化）重建本连接的门禁
     gate = GATE.new_session()
     gate_stamp = _GATE_MTIME
+    state.gate = gate
     prober = asyncio.ensure_future(scene_prober(state))
 
     try:
@@ -343,6 +347,7 @@ async def handler(ws):
                 if _GATE_MTIME != gate_stamp:   # 配置热重载：重建本连接门禁
                     gate = GATE.new_session()
                     gate_stamp = _GATE_MTIME
+                    state.gate = gate
                 if not _gate_feeds(gate, pcm):
                     # 门禁关闭（未唤醒）：丢弃；半截语音清掉，防唤醒后混入旧片段
                     if buf.talking:
@@ -487,9 +492,14 @@ async def scene_prober(state):
     这样更早的画面以文本形式累积进上下文，配合 frame_buffer 里
     最近几帧原图，模拟 Qwen-Omni 会话内图像累积的效果。
     每连接一个 prober 任务，只探测本连接的 last_frame。
+    KWS 门禁关闭（未唤醒）时跳过：没人在交互，不浪费 LLM 槽位做画面分析。
     """
     while True:
         await asyncio.sleep(SCENE_PROBE_INTERVAL)
+        gate = state.gate
+        if (gate is not None and gate.config.mode in (MODE_KWS, MODE_KWS_TEXT)
+                and not gate.door_open):
+            continue   # 门关闭：帧照常累积在 last_frame，唤醒后立即可分析
         img = state.last_frame["img"]
         if not img or state.last_frame["probed"]:
             continue

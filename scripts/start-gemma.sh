@@ -22,6 +22,7 @@ exec "$(dirname "${BASH_SOURCE[0]}")/../bin/llama-b10223"/llama-server \
   -m "$GGUF" \
   ${MMPROJ:+--mmproj "$MMPROJ"} \
   --host 127.0.0.1 --port 8081 \
-  -c 8192 \
+  -c "${LLAMA_CTX:-8192}" \
+  -np "${LLAMA_PARALLEL:-4}" \
   --no-webui \
   --n-gpu-layers all

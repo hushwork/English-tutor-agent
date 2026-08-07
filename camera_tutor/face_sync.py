@@ -56,7 +56,8 @@ class FaceSyncManager:
     - Clean lifecycle (start/stop)
     """
 
-    def __init__(self):
+    def __init__(self, user_id: str = ""):
+        self.user_id = user_id
         self._ws = None
         self._http_fallback = False
         self._last_viseme_label: Optional[str] = None
@@ -153,7 +154,7 @@ class FaceSyncManager:
         try:
             httpx.post(
                 DASHBOARD_CAMERA_URL,
-                json={"camera_frame": b64},
+                json={"camera_frame": b64, "user_id": self.user_id},
                 timeout=2,
                 verify=_HTTP_VERIFY,
             )
@@ -166,6 +167,8 @@ class FaceSyncManager:
 
     def _send_payload(self, payload: dict) -> None:
         """Send a JSON payload via WS or HTTP fallback."""
+        # 多用户路由：所有事件携带 user_id（dashboard 按此分发）
+        payload.setdefault("user_id", self.user_id)
         # WebSocket path
         if self._ws is not None and not self._http_fallback:
             try:
@@ -219,6 +222,7 @@ class FaceSyncManager:
             "mouth_width": 0.0,
             "tongue_visible": 0.0,
             "transcript": "",
+            "user_id": self.user_id,
         }
         if self._ws is not None and not self._http_fallback:
             try:

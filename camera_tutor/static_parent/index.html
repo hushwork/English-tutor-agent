@@ -236,7 +236,12 @@
     <span class="status-dot online" id="statusDot"></span>
     Camera Tutor
   </h1>
-  <span style="font-size:12px;color:var(--text2)" id="dateDisplay"></span>
+  <div style="display:flex;align-items:center;gap:10px">
+    <select id="userSelect" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:12px;">
+      <option value="">全部（legacy）</option>
+    </select>
+    <span style="font-size:12px;color:var(--text2)" id="dateDisplay"></span>
+  </div>
 </div>
 
 <div class="tab-bar">
@@ -409,6 +414,66 @@
     </div>
 
     <div class="section">
+      <h3>🚪 Voice Gate（拒识 / 唤醒）</h3>
+      <div class="settings-row">
+        <span class="label">Mode</span>
+        <select id="gateMode" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px">
+          <option value="off">off — 无门禁（默认）</option>
+          <option value="text">text — 指令拒识（方案A）</option>
+          <option value="kws">kws — 唤醒词（方案B）</option>
+          <option value="kws+text">kws+text — 叠加</option>
+        </select>
+      </div>
+      <div id="gateTextFields">
+        <div class="settings-row">
+          <span class="label">Commands（一行一条）</span>
+        </div>
+        <textarea id="gateCommands" rows="3" style="width:100%;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:12px" placeholder="what's this&#10;sing a song"></textarea>
+        <div class="settings-row">
+          <span class="label">Wake prefixes（逗号分隔）</span>
+          <input type="text" id="gatePrefixes" placeholder="emma" style="width:140px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px">
+        </div>
+        <div class="settings-row">
+          <span class="label">Text match mode</span>
+          <select id="gateTextMode" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px">
+            <option value="command">command（整句命中）</option>
+            <option value="prefix">prefix（前缀放行）</option>
+          </select>
+        </div>
+        <div class="settings-row">
+          <span class="label">激活窗口（秒，0=纯单次）</span>
+          <input type="number" id="gateWindow" min="0" max="120" step="1" style="width:70px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px">
+        </div>
+        <div class="settings-row">
+          <span class="label">模糊容差（编辑距离）</span>
+          <input type="number" id="gateFuzzy" min="0" max="3" step="1" style="width:70px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px">
+        </div>
+        <div class="settings-row">
+          <span class="label">未命中行为</span>
+          <select id="gateOnReject" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px">
+            <option value="canned_reply">固定话术</option>
+            <option value="silent">静默</option>
+            <option value="escalate">连拒后引导</option>
+          </select>
+        </div>
+      </div>
+      <div id="gateKwsFields">
+        <div class="settings-row">
+          <span class="label">KWS 阈值（越高越严）</span>
+          <input type="number" id="gateKwsThreshold" min="0.1" max="0.9" step="0.05" style="width:70px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px">
+        </div>
+        <div class="settings-row">
+          <span class="label">唤醒开门时长（秒）</span>
+          <input type="number" id="gateKwsWindow" min="1" max="120" step="1" style="width:70px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px">
+        </div>
+      </div>
+      <button onclick="saveVoiceGate()" style="width:100%;padding:10px;border:none;border-radius:8px;background:var(--accent);color:#fff;font-size:13px;cursor:pointer;margin-top:8px">保存门禁配置</button>
+      <div id="gateSaveHint" style="font-size:11px;color:var(--text2);padding-top:6px">
+        保存后语音管道自动热加载，无需重启。kws 模式需先安装 openwakeword 并配置模型。
+      </div>
+    </div>
+
+    <div class="section">
       <h3>🛌 Quick Actions</h3>
       <button onclick="setRestMode()" style="
         width:100%;padding:12px;border:1px solid var(--red);border-radius:8px;
@@ -441,9 +506,28 @@ document.getElementById('dateDisplay').textContent = new Date().toLocaleDateStri
 });
 
 // ── Data Loading ───────────────────────────────────────────────
+// 用户过滤：空串 = 全部（legacy 全局数据）；切换后重新拉取
+let currentUser = '';
+function userQuery() { return currentUser ? '?user=' + encodeURIComponent(currentUser) : ''; }
+async function loadUsers() {
+  try {
+    const resp = await fetch('/api/users');
+    const data = await resp.json();
+    const sel = document.getElementById('userSelect');
+    sel.innerHTML = '<option value="">全部（legacy）</option>' +
+      (data.users || []).map(u => `<option value="${escapeHtml(u)}">👤 ${escapeHtml(u)}</option>`).join('');
+    sel.value = currentUser;
+  } catch(e) { console.error('Failed to load users:', e); }
+}
+document.getElementById('userSelect').addEventListener('change', function() {
+  currentUser = this.value;
+  loadToday();
+  loadWords();
+});
+
 async function loadToday() {
   try {
-    const resp = await fetch('/api/report/daily');
+    const resp = await fetch('/api/report/daily' + userQuery());
     const data = await resp.json();
 
     document.getElementById('metricInput').textContent = data.total_english_input || 0;
@@ -496,7 +580,7 @@ async function loadToday() {
 
 async function loadWords() {
   try {
-    const resp = await fetch('/api/vocabulary');
+    const resp = await fetch('/api/vocabulary' + userQuery());
     const data = await resp.json();
     const stats = data.stats || {};
     document.getElementById('srTotal').textContent = stats.total || 0;
@@ -652,12 +736,71 @@ bindAudioToggle('aecToggle', 'echoCancellation');
 bindAudioToggle('nsToggle', 'noiseSuppression');
 bindAudioToggle('agcToggle', 'autoGainControl');
 
+// ── Voice Gate（拒识/唤醒） ────────────────────────────────────
+function gateFieldsVisibility() {
+  const m = document.getElementById('gateMode').value;
+  document.getElementById('gateTextFields').style.display = (m === 'text' || m === 'kws+text') ? 'block' : 'none';
+  document.getElementById('gateKwsFields').style.display = (m === 'kws' || m === 'kws+text') ? 'block' : 'none';
+}
+document.getElementById('gateMode').addEventListener('change', gateFieldsVisibility);
+
+async function loadVoiceGate() {
+  try {
+    const resp = await fetch('/api/voice-gate');
+    const cfg = await resp.json();
+    document.getElementById('gateMode').value = cfg.mode || 'off';
+    const t = cfg.text || {};
+    document.getElementById('gateCommands').value = (t.commands || []).join('\n');
+    document.getElementById('gatePrefixes').value = (t.wake_prefixes || []).join(', ');
+    document.getElementById('gateTextMode').value = t.mode || 'command';
+    document.getElementById('gateWindow').value = t.activation_window_s ?? 10;
+    document.getElementById('gateFuzzy').value = t.fuzzy_tolerance ?? 1;
+    document.getElementById('gateOnReject').value = t.on_reject || 'canned_reply';
+    const k = cfg.kws || {};
+    document.getElementById('gateKwsThreshold').value = k.threshold ?? 0.5;
+    document.getElementById('gateKwsWindow').value = k.activation_window_s ?? 10;
+    gateFieldsVisibility();
+  } catch(e) { console.error('Failed to load voice gate:', e); }
+}
+
+async function saveVoiceGate() {
+  const body = {
+    mode: document.getElementById('gateMode').value,
+    text: {
+      enabled: true,   // 是否生效由 mode 决定，这里恒开
+      commands: document.getElementById('gateCommands').value.split('\n').map(s => s.trim()).filter(Boolean),
+      wake_prefixes: document.getElementById('gatePrefixes').value.split(',').map(s => s.trim()).filter(Boolean),
+      mode: document.getElementById('gateTextMode').value,
+      activation_window_s: parseFloat(document.getElementById('gateWindow').value) || 0,
+      fuzzy_tolerance: parseInt(document.getElementById('gateFuzzy').value) || 0,
+      on_reject: document.getElementById('gateOnReject').value,
+    },
+    kws: {
+      threshold: parseFloat(document.getElementById('gateKwsThreshold').value) || 0.5,
+      activation_window_s: parseFloat(document.getElementById('gateKwsWindow').value) || 10,
+    },
+  };
+  try {
+    const resp = await fetch('/api/voice-gate', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const r = await resp.json();
+    document.getElementById('gateSaveHint').textContent = r.success
+      ? '✅ 已保存，管道将在数秒内热加载' : '⚠️ 保存失败';
+  } catch(e) {
+    document.getElementById('gateSaveHint').textContent = '⚠️ 保存失败: ' + e.message;
+  }
+}
+
 // ── Init ───────────────────────────────────────────────────────
+loadUsers();
 loadToday();
 loadDeviceStatus();
 loadTutors();
 loadChildAge();
 loadAudioSettings();
+loadVoiceGate();
 </script>
 </body>
 </html>

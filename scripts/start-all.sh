@@ -30,10 +30,13 @@ start() {
 
   # 1) llama-server: Gemma-4-E4B + mmproj 视觉（GPU 卸载；注意本机 Vulkan 显存
   #    上报偶发损坏，若启动即崩可改回 --device none 强制 CPU）
+  #    多用户并发：-np 并发槽数（LLAMA_PARALLEL，默认 4），总上下文 -c 被槽位
+  #    均分（默认 8192 → 每槽 2048 token；带图像的对话不够用时调 LLAMA_CTX）
   if ! ss -tln | grep -q ':8080 '; then
     nohup $LLAMA -m $MODELS/gemma4-e4b/gemma-4-E4B-it-Q4_K_M.gguf \
       --mmproj $MODELS/gemma4-e4b/mmproj-BF16.gguf \
-      --host 127.0.0.1 --port 8080 -c 8192 -t 12 --no-webui --n-gpu-layers all \
+      --host 127.0.0.1 --port 8080 -c "${LLAMA_CTX:-8192}" -np "${LLAMA_PARALLEL:-4}" \
+      -t 12 --no-webui --n-gpu-layers all \
       --no-jinja --chat-template "$CT" > $LOGS/llama.log 2>&1 &
   fi
   wait_port 8080 llama-server || return 1

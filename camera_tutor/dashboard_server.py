@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -53,6 +54,49 @@ report_engine = ParentReportEngine()
 sr = SpacedRepetition(storage_dir=data_dir())
 memory = ConversationMemory(storage_dir=data_dir())
 decision_engine = DecisionEngine()
+
+# Per-user 实例（惰性构造）；空 user 走上面的全局单例（legacy 全局视图）
+_sr_by_user: dict[str, SpacedRepetition] = {}
+_memory_by_user: dict[str, ConversationMemory] = {}
+_report_by_user: dict[str, ParentReportEngine] = {}
+
+
+def _resolve_user(user: str) -> str:
+    """校验 ?user= 参数（空串 = legacy 全局视图）；非法 → 400。"""
+    if not user:
+        return ""
+    from camera_tutor.rtc_device import validate_user_id
+    try:
+        return validate_user_id(user)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+def _sr_for(user: str) -> SpacedRepetition:
+    uid = _resolve_user(user)
+    if not uid:
+        return sr
+    if uid not in _sr_by_user:
+        _sr_by_user[uid] = SpacedRepetition(storage_dir=data_dir(), user_id=uid)
+    return _sr_by_user[uid]
+
+
+def _memory_for(user: str) -> ConversationMemory:
+    uid = _resolve_user(user)
+    if not uid:
+        return memory
+    if uid not in _memory_by_user:
+        _memory_by_user[uid] = ConversationMemory(storage_dir=data_dir(), user_id=uid)
+    return _memory_by_user[uid]
+
+
+def _report_for(user: str) -> ParentReportEngine:
+    uid = _resolve_user(user)
+    if not uid:
+        return report_engine
+    if uid not in _report_by_user:
+        _report_by_user[uid] = ParentReportEngine(user_id=uid)
+    return _report_by_user[uid]
 
 # Tutor personas
 from camera_tutor.tutor_personas import (
@@ -126,19 +170,19 @@ async def serve_dashboard():
 # ── Report API ──────────────────────────────────────────────────
 
 @app.get("/api/report/daily")
-async def get_daily_report(date: Optional[str] = None):
+async def get_daily_report(date: Optional[str] = None, user: str = ""):
     """Get the daily report for a specific date (default: today).
 
     Returns: DailyReport as JSON
     """
-    report = report_engine.generate_daily_report()
+    report = _report_for(user).generate_daily_report()
     return report.__dict__
 
 
 @app.get("/api/report/weekly")
-async def get_weekly_summary():
+async def get_weekly_summary(user: str = ""):
     """Get the weekly summary."""
-    return report_engine.generate_weekly_summary()
+    return _report_for(user).generate_weekly_summary()
 
 
 @app.get("/api/report/history")
@@ -160,51 +204,53 @@ async def get_report_history(days: int = 7):
 # ── Vocabulary API (reuses SM-2 from english-tutor) ─────────────
 
 @app.get("/api/vocabulary")
-async def get_vocabulary():
+async def get_vocabulary(user: str = ""):
     """Get all vocabulary cards with SR stats."""
-    cards = sr.get_all_cards()
+    user_sr = _sr_for(user)
+    cards = user_sr.get_all_cards()
     return {
         "cards": [c.to_dict() for c in cards],
-        "stats": sr.get_stats(),
+        "stats": user_sr.get_stats(),
     }
 
 
 @app.get("/api/vocabulary/due")
-async def get_due_vocabulary(limit: int = 10):
+async def get_due_vocabulary(limit: int = 10, user: str = ""):
     """Get vocabulary cards due for review."""
-    cards = sr.get_due_cards(limit=limit)
+    cards = _sr_for(user).get_due_cards(limit=limit)
     return {"cards": [c.to_dict() for c in cards], "count": len(cards)}
 
 
 @app.post("/api/vocabulary/review")
-async def submit_vocabulary_review(word: str, quality: int = Query(ge=0, le=5)):
+async def submit_vocabulary_review(word: str, quality: int = Query(ge=0, le=5), user: str = ""):
     """Submit a vocabulary review (SM-2 quality 0-5)."""
     try:
-        card = sr.review_card(word, quality)
+        card = _sr_for(user).review_card(word, quality)
         return {"success": True, "card": card.to_dict()}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
 
 @app.post("/api/vocabulary/add")
-async def add_vocabulary(word: str, definition: str = "", context: str = ""):
+async def add_vocabulary(word: str, definition: str = "", context: str = "", user: str = ""):
     """Add a new vocabulary card."""
-    card = sr.add_card(word, definition, context)
+    card = _sr_for(user).add_card(word, definition, context)
     return {"success": True, "card": card.to_dict()}
 
 
 # ── Activity Timeline API ───────────────────────────────────────
 
 @app.get("/api/timeline")
-async def get_timeline(date: Optional[str] = None):
+async def get_timeline(date: Optional[str] = None, user: str = ""):
     """Get the activity timeline for today (or specified date).
 
     Returns list of events with timestamps.
     """
     # For now, return the raw log (in production: query by date)
-    log = report_engine._log
+    engine = _report_for(user)
+    log = engine._log
     return {
-        "date": date or report_engine._today,
+        "date": date or engine._today,
         "events": log[-50:],  # Last 50 events
         "total": len(log),
     }
@@ -262,9 +308,9 @@ async def wake_device():
 # ── Highlights API ──────────────────────────────────────────────
 
 @app.get("/api/highlights")
-async def get_highlights(limit: int = 5):
+async def get_highlights(limit: int = 5, user: str = ""):
     """Get recent 'wow moments' — times the child spoke English."""
-    report = report_engine.generate_daily_report()
+    report = _report_for(user).generate_daily_report()
     return {"highlights": report.highlights[:limit]}
 
 
@@ -294,6 +340,34 @@ async def update_audio_settings(
             settings[key] = val
     _save_audio_settings(settings)
     return {"success": True, "settings": settings}
+
+
+# ── Voice Gate（拒识/唤醒词门禁） ──────────────────────────────
+# local_pipe 按文件 mtime 热重载 voice_gate.json，保存后无需重启
+
+@app.get("/api/voice-gate")
+async def get_voice_gate():
+    """Get voice gate config (mode + text filter + kws settings)."""
+    from camera_tutor.voice_gate import VoiceGate
+    return asdict(VoiceGate.load().config)
+
+
+@app.post("/api/voice-gate")
+async def update_voice_gate(request: Request):
+    """Update voice gate config (partial merge; body = JSON)."""
+    from camera_tutor.voice_gate import VoiceGate
+    data = await request.json()
+    gate = VoiceGate.load()
+    current = asdict(gate.config)
+    merged = dict(current)
+    if "mode" in data:
+        merged["mode"] = data["mode"]
+    for section in ("text", "kws"):
+        if isinstance(data.get(section), dict):
+            merged[section] = {**current.get(section, {}), **data[section]}
+    gate.config = VoiceGate._config_from_dict(merged)
+    gate.save()
+    return {"success": True, "config": asdict(gate.config)}
 
 @app.get("/api/tutor/list")
 async def api_list_tutors():
@@ -356,21 +430,28 @@ async def api_set_child_age(age: int = Query(ge=1, le=18)):
 
 # Emma's real-time face state (written by realtime_demo.py)
 _emma_face = {"viseme": "rest", "mouth_open": 0.0, "tongue_visible": 0.0, "transcript": ""}
-_face_clients: set[WebSocket] = set()
+# ws → user_id（空串 = 未标识的旧版客户端，接收所有用户的事件）
+_face_clients: dict[WebSocket, str] = {}
 
 @app.post("/api/emma/face/reset")
 async def reset_emma_face():
     """Reset face state (call at realtime_demo startup)."""
     _emma_face.update({"viseme": "rest", "mouth_open": 0.0, "tongue_visible": 0.0, "transcript": ""})
     import asyncio
-    asyncio.create_task(_broadcast_face())
+    asyncio.create_task(_broadcast_event({
+        "type": "init", "viseme": "rest", "mouth_open": 0.0,
+        "mouth_width": 0.0, "tongue_visible": 0.0,
+    }))
     return {"ok": True}
 
 @app.websocket("/ws/emma/face")
 async def ws_emma_face(websocket: WebSocket):
-    """Browser clients — receives typed events: {"type":"viseme",...} {"type":"camera",...}"""
+    """Browser clients — receives typed events: {"type":"viseme",...} {"type":"camera",...}
+
+    ?user=<id> 标识该客户端只收对应用户的事件（未标识则全收）。
+    """
     await websocket.accept()
-    _face_clients.add(websocket)
+    _face_clients[websocket] = websocket.query_params.get("user", "")
     try:
         await websocket.send_json({"type": "init", "viseme": "rest",
                                     "mouth_open": 0.0, "mouth_width": 0.0,
@@ -378,7 +459,7 @@ async def ws_emma_face(websocket: WebSocket):
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
-        _face_clients.discard(websocket)
+        _face_clients.pop(websocket, None)
 
 @app.websocket("/ws/emma/source")
 async def ws_emma_source(websocket: WebSocket):
@@ -393,14 +474,22 @@ async def ws_emma_source(websocket: WebSocket):
         pass
 
 async def _broadcast_event(data: dict):
-    """Relay a typed event to all browser WS clients."""
-    dead = set()
-    for ws in _face_clients:
+    """Relay a typed event to browser WS clients.
+
+    事件带 user_id 时只发给同 user 的客户端 + 未标识的旧版客户端；
+    不带 user_id 时广播所有客户端。
+    """
+    uid = data.get("user_id", "")
+    dead = []
+    for ws, client_uid in _face_clients.items():
+        if uid and client_uid not in (uid, ""):
+            continue
         try:
             await ws.send_json(data)
         except Exception:
-            dead.add(ws)
-    _face_clients.difference_update(dead)
+            dead.append(ws)
+    for ws in dead:
+        _face_clients.pop(ws, None)
 
 # Camera frames arrive via HTTP POST (1fps) — broadcast as typed event
 @app.post("/api/emma/camera")
@@ -408,8 +497,35 @@ async def set_camera_frame(data: dict):
     frame = data.get("camera_frame", "")
     if frame:
         import asyncio
-        asyncio.create_task(_broadcast_event({"type": "camera", "camera_frame": frame}))
+        asyncio.create_task(_broadcast_event({
+            "type": "camera",
+            "camera_frame": frame,
+            "user_id": data.get("user_id", ""),
+        }))
     return {"ok": True}
+
+
+# ── Users API ───────────────────────────────────────────────────
+
+@app.get("/api/users")
+async def list_users():
+    """列出有练习数据的用户（data_dir 下含 sessions/ 或 stats.json 的子目录）。
+
+    legacy 全局数据（直接在 data_dir 下）存在时始终包含 "default"。
+    """
+    root = data_dir()
+    users: list[str] = []
+    if (root / "stats.json").exists() or (root / "sessions").is_dir():
+        users.append("default")
+    try:
+        for d in sorted(root.iterdir()):
+            if not d.is_dir() or d.name in users:
+                continue
+            if (d / "sessions").is_dir() or (d / "stats.json").exists():
+                users.append(d.name)
+    except OSError:
+        pass
+    return {"users": users}
 
 
 # ── Health Check ────────────────────────────────────────────────
@@ -454,7 +570,13 @@ async def rtc_offer(request: Request):
     except Exception:
         raise HTTPException(status_code=400, detail="expected {sdp, type} JSON body")
 
-    return await manager.handle_offer(sdp, offer_type)
+    # 多用户并发：浏览器可在 offer 里带 user_id（缺省 → "default"）；
+    # validate_user_id 拒绝非法 ID（路径穿越防护）时返回 400。
+    user_id = payload.get("user_id", "")
+    try:
+        return await manager.handle_offer(sdp, offer_type, user_id=user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.get("/rtc/config")

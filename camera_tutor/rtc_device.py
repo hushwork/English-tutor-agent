@@ -524,75 +524,181 @@ class RTCFrameSource:
             return True, self._latest.copy()
 
 
-# ── RTCDeviceManager ──────────────────────────────────────────────
+# ── RTCSession / RTCDeviceManager ─────────────────────────────────
+
+import re
+import uuid
+
+USER_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+DEFAULT_USER_ID = "default"
+
+
+def validate_user_id(user_id: str) -> str:
+    """校验浏览器传来的 user_id（用作数据目录名，必须防路径穿越）。
+
+    合法: 1-32 位字母/数字/下划线/连字符。空串回退为 "default"。
+    非法时抛 ValueError，由信令端点转成 400。
+    """
+    if not user_id:
+        return DEFAULT_USER_ID
+    if not USER_ID_RE.match(user_id):
+        raise ValueError(f"invalid user_id: {user_id!r}")
+    return user_id
+
+
+class RTCSession:
+    """一路 WebRTC peer 连接及其独立的 A/V seam 对象。
+
+    每个并发用户（浏览器）一个实例：自己的 RTCAudioManager（麦克风缓冲、
+    扬声器环形队列、viseme 队列）和 RTCFrameSource（最新帧），互不共享。
+    """
+
+    def __init__(self, session_id: str, user_id: str,
+                 mic_gain: float = DEFAULT_MIC_GAIN,
+                 viseme_lead_ms: int = DEFAULT_VISME_LEAD_MS):
+        self.session_id = session_id
+        self.user_id = user_id
+        self.audio = RTCAudioManager(mic_gain=mic_gain,
+                                     viseme_lead_ms=viseme_lead_ms)
+        self.camera = RTCFrameSource()
+        self._pc: Optional[RTCPeerConnection] = None
+
 
 class RTCDeviceManager:
-    """Owns the WebRTC peer connection and the A/V seam objects.
+    """并发 WebRTC 会话注册表 —— 每路浏览器连接一个 RTCSession。
 
-    One active peer at a time: a new offer replaces the old connection.
+    多用户并发：新 offer 创建新 session，不再踢掉旧连接。
+    唯一例外：同一 user_id 重复连接时替换该用户的旧 session
+    （同一用户开两个标签页，后开的生效）。
     """
 
     def __init__(self, mic_gain: float = DEFAULT_MIC_GAIN,
                  viseme_lead_ms: int = DEFAULT_VISME_LEAD_MS):
-        self.audio = RTCAudioManager(mic_gain=mic_gain, viseme_lead_ms=viseme_lead_ms)
-        self.camera = RTCFrameSource()
-        self._pc: Optional[RTCPeerConnection] = None
+        self._mic_gain = mic_gain
+        self._viseme_lead_ms = viseme_lead_ms
+        self._sessions: dict[str, RTCSession] = {}
         self._offer_lock: Optional[asyncio.Lock] = None
+        # 会话生命周期钩子（agent 层挂接，同步调用，运行在 uvicorn 线程）
+        self._on_session_created: Optional[Callable[[RTCSession], None]] = None
+        self._on_session_closed: Optional[Callable[[RTCSession], None]] = None
 
-    async def handle_offer(self, sdp: str, offer_type: str) -> dict:
+    def set_session_hooks(
+        self,
+        on_created: Optional[Callable[[RTCSession], None]] = None,
+        on_closed: Optional[Callable[[RTCSession], None]] = None,
+    ) -> None:
+        """注册会话创建/关闭回调（每路 peer 各触发一次）。"""
+        self._on_session_created = on_created
+        self._on_session_closed = on_closed
+
+    @property
+    def sessions(self) -> dict[str, RTCSession]:
+        """当前活跃会话的快照 {session_id: RTCSession}。"""
+        return dict(self._sessions)
+
+    def get_session(self, session_id: str) -> Optional[RTCSession]:
+        return self._sessions.get(session_id)
+
+    async def handle_offer(self, sdp: str, offer_type: str,
+                           user_id: str = "") -> dict:
         """Handle a browser SDP offer; return the answer as a dict.
 
         Runs in the uvicorn event loop (called from the FastAPI endpoint).
+        每个 offer 创建独立的 RTCSession；返回值带 session_id/user_id
+        （浏览器可忽略多余字段，兼容旧版前端）。
         """
+        user_id = validate_user_id(user_id)
         if self._offer_lock is None:
             self._offer_lock = asyncio.Lock()
         async with self._offer_lock:
-            if self._pc is not None:
-                logger.info("RTC: new offer — closing previous peer")
-                await self._close_pc()
+            # 同一用户重复连接：替换其旧 session（不影响其他用户）
+            for s in list(self._sessions.values()):
+                if s.user_id == user_id:
+                    logger.info("RTC: user %s reconnected — closing old session %s",
+                                user_id, s.session_id)
+                    await self._close_session(s)
 
+            session = RTCSession(
+                session_id=uuid.uuid4().hex[:12],
+                user_id=user_id,
+                mic_gain=self._mic_gain,
+                viseme_lead_ms=self._viseme_lead_ms,
+            )
             pc = RTCPeerConnection(configuration=_rtc_configuration())
-            self._pc = pc
+            session._pc = pc
+            self._sessions[session.session_id] = session
 
             @pc.on("track")
             def on_track(track):
                 if track.kind == "audio":
-                    self.audio.attach_mic_track(track)
+                    session.audio.attach_mic_track(track)
                 elif track.kind == "video":
-                    self.camera.attach_track(track)
+                    session.camera.attach_track(track)
 
             @pc.on("connectionstatechange")
             async def on_state():
-                logger.info("RTC connection state: %s", pc.connectionState)
-                if pc is not self._pc:
-                    return  # 旧连接的迟到事件，不影响当前 peer 状态
+                logger.info("RTC [%s/%s] state: %s",
+                            session.user_id, session.session_id,
+                            pc.connectionState)
+                if self._sessions.get(session.session_id) is not session:
+                    return  # 旧 session 的迟到事件，不影响新 session 状态
                 if pc.connectionState == "connected":
-                    self.audio.notify_peer_connected()
+                    session.audio.notify_peer_connected()
                 elif pc.connectionState in ("failed", "closed", "disconnected"):
-                    self.audio.notify_peer_disconnected()
+                    session.audio.notify_peer_disconnected()
                     if pc.connectionState in ("failed", "closed"):
-                        await self._close_pc()
+                        await self._close_session(session)
 
-            pc.addTrack(self.audio.create_out_track())
+            pc.addTrack(session.audio.create_out_track())
 
             await pc.setRemoteDescription(
                 RTCSessionDescription(sdp=sdp, type=offer_type))
             answer = await pc.createAnswer()
             await pc.setLocalDescription(answer)
-            logger.info("RTC peer established")
-            return {"sdp": pc.localDescription.sdp,
-                    "type": pc.localDescription.type}
+            logger.info("RTC peer established: user=%s session=%s (%d active)",
+                        user_id, session.session_id, len(self._sessions))
 
-    async def _close_pc(self) -> None:
-        pc, self._pc = self._pc, None
+        if self._on_session_created is not None:
+            try:
+                self._on_session_created(session)
+            except Exception:
+                logger.exception("on_session_created hook failed")
+        return {"sdp": pc.localDescription.sdp,
+                "type": pc.localDescription.type,
+                "session_id": session.session_id,
+                "user_id": user_id}
+
+    async def _close_session(self, session: RTCSession) -> None:
+        """关闭并注销一个 session（幂等）。"""
+        if self._sessions.pop(session.session_id, None) is None:
+            return  # 已关闭
+        pc, session._pc = session._pc, None
         if pc is not None:
             try:
                 await pc.close()
             except Exception as e:
                 logger.debug("RTC close error: %s", e)
+        session.audio.stop()
+        session.camera.stop()
+        logger.info("RTC session closed: user=%s session=%s (%d active)",
+                    session.user_id, session.session_id, len(self._sessions))
+        if self._on_session_closed is not None:
+            try:
+                self._on_session_closed(session)
+            except Exception:
+                logger.exception("on_session_closed hook failed")
+
+    async def close_user_session(self, user_id: str) -> bool:
+        """按 user_id 关闭会话（如 agent 层要求下线）。返回是否关到了。"""
+        for s in list(self._sessions.values()):
+            if s.user_id == user_id:
+                await self._close_session(s)
+                return True
+        return False
 
     async def shutdown(self) -> None:
-        await self._close_pc()
+        for s in list(self._sessions.values()):
+            await self._close_session(s)
 
 
 # ── Module-level registry (dashboard ↔ agent, same process) ──────

@@ -5,9 +5,9 @@ Simulates the browser side with a second in-process RTCPeerConnection
 (dummy sine mic + green-screen camera), runs the real offer/answer
 against RTCDeviceManager, and verifies all four seams end to end:
 
-  dummy mic  ──► manager.audio.read_mic()   (16kHz PCM out)
+  dummy mic  ──► session.audio.read_mic()   (16kHz PCM out)
   TTS PCM    ──► browser-side audio track    (48kHz frames received)
-  dummy cam  ──► manager.camera.read_frame() (BGR frames)
+  dummy cam  ──► session.camera.read_frame() (BGR frames)
   visemes    ──► handler fired alongside outbound audio
 
 Run:  python3 tests/test_rtc_loopback.py
@@ -88,11 +88,19 @@ class DummyCamTrack(VideoStreamTrack):
 
 async def main() -> None:
     manager = RTCDeviceManager()
-    manager.audio.start()
-    manager.camera.start()
 
+    # 多会话模型：audio/camera seam 属于每个 RTCSession（offer 时创建），
+    # 经 session hook 启动并挂 viseme 回调（对应 agent._on_rtc_session_created）
     visemes_fired: list[dict] = []
-    manager.audio.set_viseme_handler(visemes_fired.append)
+    session_box: dict = {}
+
+    def on_session_created(s) -> None:
+        s.audio.start()
+        s.camera.start()
+        s.audio.set_viseme_handler(visemes_fired.append)
+        session_box["s"] = s
+
+    manager.set_session_hooks(on_created=on_session_created)
 
     browser = RTCPeerConnection()
     browser.addTrack(DummyMicTrack())
@@ -124,6 +132,7 @@ async def main() -> None:
         browser.localDescription.sdp, browser.localDescription.type)
     await browser.setRemoteDescription(
         RTCSessionDescription(sdp=answer["sdp"], type=answer["type"]))
+    session = session_box["s"]
 
     # Let ICE/DTLS connect and tracks start flowing
     deadline = time.time() + 10
@@ -137,15 +146,15 @@ async def main() -> None:
     deadline = time.time() + 5
     mic_data = None
     while mic_data is None and time.time() < deadline:
-        mic_data = manager.audio.read_mic()
+        mic_data = session.audio.read_mic()
         await asyncio.sleep(0.05)
     assert mic_data is not None and len(mic_data) == MIC_READ_BYTES
-    assert manager.audio.mic_level_rms > 100, "mic signal too quiet"
+    assert session.audio.mic_level_rms > 100, "mic signal too quiet"
     print("✓ mic uplink (16kHz PCM flowing)")
 
     # 2. TTS downlink + 3. visemes: write_spk → browser audio track
     pcm24 = (np.sin(np.arange(4800) / 5.0) * 5000).astype(np.int16).tobytes()
-    manager.audio.write_spk(pcm24, visemes=[{"viseme": "A", "mouth_open": 0.9}])
+    session.audio.write_spk(pcm24, visemes=[{"viseme": "A", "mouth_open": 0.9}])
     deadline = time.time() + 5
     while (audio_frames_received < 5 or not visemes_fired) and time.time() < deadline:
         await asyncio.sleep(0.05)
@@ -156,10 +165,10 @@ async def main() -> None:
 
     # 4. Camera uplink: dummy frames → read_frame()
     deadline = time.time() + 5
-    ok, frame = manager.camera.read_frame()
+    ok, frame = session.camera.read_frame()
     while not ok and time.time() < deadline:
         await asyncio.sleep(0.1)
-        ok, frame = manager.camera.read_frame()
+        ok, frame = session.camera.read_frame()
     assert ok and frame is not None and frame.shape == (480, 640, 3)
     # Video goes through a lossy codec (VP8/H.264) — allow tolerance,
     # just check the green channel dominates.
@@ -169,9 +178,7 @@ async def main() -> None:
     print("✓ camera uplink (BGR frames)")
 
     await browser.close()
-    await manager.shutdown()
-    manager.audio.stop()
-    manager.camera.stop()
+    await manager.shutdown()  # 关闭 session（内部已 stop audio/camera）
     print("\nWebRTC loopback: all checks passed ✓")
 
 

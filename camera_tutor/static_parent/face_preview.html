@@ -59,6 +59,7 @@
   <span class="dot off" id="connDot"></span>
   <span id="status">Loading...</span>
   <span>👄<span id="mouthVal">0</span></span>
+  <span id="userBadge">👤 …</span>
 </div>
 
 <script src="live2d/core/live2dcubismcore.min.js"></script>
@@ -77,6 +78,23 @@ window.addEventListener('error', (e) => {
 
 const DEVICE_MODE = new URLSearchParams(location.search).get('device') === '1';
 const RTC_TOKEN = new URLSearchParams(location.search).get('token') || '';
+
+// ── 用户标识：URL ?user= > localStorage > 手动输入（多用户并发练习） ──
+const USER_ID_RE = /^[A-Za-z0-9_-]{1,32}$/;
+function resolveUserId() {
+  const fromUrl = new URLSearchParams(location.search).get('user') || '';
+  if (USER_ID_RE.test(fromUrl)) return fromUrl;
+  const saved = localStorage.getItem('tutor_user_id') || '';
+  if (USER_ID_RE.test(saved)) return saved;
+  let uid = '';
+  while (!USER_ID_RE.test(uid)) {
+    uid = (prompt('请输入用户名（1-32 位字母/数字/_/-）:', saved || '') || '').trim();
+  }
+  return uid;
+}
+const USER_ID = resolveUserId();
+localStorage.setItem('tutor_user_id', USER_ID);
+document.getElementById('userBadge').textContent = '👤 ' + USER_ID;
 
 // ── 当前导师：标题 + 左上角徽章（轮询以感知热切换） ──
 let currentTutor = null;
@@ -107,7 +125,7 @@ function renderConn() {
 
 (function connectWS() {
   const p = location.protocol === 'https:' ? 'wss://' : 'ws://';
-  const ws = new WebSocket(p + location.host + '/ws/emma/face');
+  const ws = new WebSocket(p + location.host + '/ws/emma/face?user=' + encodeURIComponent(USER_ID));
   ws.onopen = () => {
     wsOk = true; renderConn();
     document.getElementById('status').textContent = '🟢 Live';
@@ -222,7 +240,7 @@ async function startDevice() {
     if (RTC_TOKEN) headers['Authorization'] = 'Bearer ' + RTC_TOKEN;
     const resp = await fetch('/rtc/offer', {
       method: 'POST', headers,
-      body: JSON.stringify({ sdp: pc.localDescription.sdp, type: pc.localDescription.type }),
+      body: JSON.stringify({ sdp: pc.localDescription.sdp, type: pc.localDescription.type, user_id: USER_ID }),
     });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     await pc.setRemoteDescription(await resp.json());

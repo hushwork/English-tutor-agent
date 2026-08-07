@@ -6,7 +6,7 @@ import huggingface_hub
 _o = huggingface_hub.hf_hub_download
 huggingface_hub.hf_hub_download = lambda *a, **kw: _o(*a, **kw, local_files_only=True)
 
-import asyncio, base64, json, re, tempfile, time, logging
+import asyncio, base64, json, re, tempfile, threading, time, logging
 from collections import deque
 import numpy as np
 import websockets
@@ -15,6 +15,8 @@ from kokoro import KPipeline
 import httpx, soundfile
 from dotenv import load_dotenv
 load_dotenv()
+
+from camera_tutor.voice_gate import VoiceGate, VoiceGateConfig
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [PIPE] %(message)s")
 log = logging.getLogger("pipe")
@@ -55,9 +57,48 @@ SCENE_HISTORY_SIZE = 4      # 场景文本摘要条数上限
 SCENE_PROBE_INTERVAL = 15.0 # 场景摘要探测间隔（秒）
 HISTORY_TURNS = 4           # 随请求携带的最近对话轮数（1 轮 = user + assistant 各一条）
 
-frame_buffer: deque[str] = deque(maxlen=FRAME_BUF_SIZE)
-scene_history: deque[str] = deque(maxlen=SCENE_HISTORY_SIZE)
-last_frame = {"img": None, "probed": True}
+class ConnState:
+    """每连接视觉状态：帧缓冲、场景历史、最新帧——多客户端并发时互不串扰。"""
+    def __init__(self):
+        self.frame_buffer: deque[str] = deque(maxlen=FRAME_BUF_SIZE)
+        self.scene_history: deque[str] = deque(maxlen=SCENE_HISTORY_SIZE)
+        self.last_frame = {"img": None, "probed": True}
+
+# ── 语音门禁（方案 A 文本拒识 / 方案 B KWS 唤醒，voice_gate.json 选模式） ──
+# 默认 off，对现有对话零影响；dashboard 改配置后按文件 mtime 热重载，无需重启。
+GATE = VoiceGate(VoiceGateConfig())          # off
+_GATE_PATH = VoiceGate.default_path()
+_GATE_MTIME = None
+
+def _reload_gate_if_changed(force=False):
+    global GATE, _GATE_MTIME
+    try:
+        mt = _GATE_PATH.stat().st_mtime
+    except OSError:
+        mt = None
+    if not force and mt == _GATE_MTIME:
+        return
+    _GATE_MTIME = mt
+    try:
+        GATE = VoiceGate.load(_GATE_PATH)
+        log.info(f"voice gate: mode={GATE.config.mode}")
+    except Exception as e:
+        log.warning(f"voice gate 加载失败，维持关闭: {e}")
+
+_gate_error_logged = False
+
+def _gate_feeds(pcm_bytes) -> bool:
+    """KWS 音频门：返回 False 表示未唤醒，音频应丢弃。异常时放行（不影响对话）。"""
+    global _gate_error_logged
+    try:
+        return GATE.feed_audio(np.frombuffer(pcm_bytes, dtype=np.int16))
+    except Exception as e:
+        if not _gate_error_logged:   # 每进程只报一次，避免刷日志
+            _gate_error_logged = True
+            log.warning(f"voice gate 音频门异常，持续放行: {e}")
+        return True
+
+_reload_gate_if_changed(force=True)
 
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "small")  # base/small/medium
 # STT 后端：gemma = 音频直送本地 LLM 音频输入（实测对儿童语音最准，延迟略高）；
@@ -77,11 +118,15 @@ def get_whisper():
             _whisper = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8", cpu_threads=2)
     return _whisper
 
-def stt_whisper(pcm) -> str:
+# faster-whisper 线程安全度有限，多连接经 to_thread 并发调用时串行化 transcribe
+_stt_lock = threading.Lock()
+
+def stt_whisper_sync(pcm) -> str:
     tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     soundfile.write(tmp.name, pcm, SR)
     # vad_filter=True：whisper 内置 Silero VAD 先剔除非语音区域，抑制噪音幻觉
-    segs, _ = get_whisper().transcribe(tmp.name, language="en", beam_size=3, vad_filter=True)
+    with _stt_lock:
+        segs, _ = get_whisper().transcribe(tmp.name, language="en", beam_size=3, vad_filter=True)
     os.unlink(tmp.name)
     return " ".join(s.text.strip() for s in segs)
 
@@ -113,12 +158,15 @@ async def stt(pcm) -> str:
             return await stt_gemma(pcm)
         except Exception as e:
             log.warning(f"gemma STT 失败，回退 whisper: {e}")
-    return stt_whisper(pcm)
+    return await asyncio.to_thread(stt_whisper_sync, pcm)
 
 if STT_BACKEND == "whisper":
     get_whisper()   # 主后端是 whisper 时启动即加载，避免首轮 STT 卡顿
 
 kokoro_pipe = KPipeline(lang_code="a")
+# kokoro_pipe 是全局单例且合成是同步密集调用——并发连接间用锁串行化，
+# 避免两个协程交错驱动同一个生成器（单句 0.3-0.5s，排队可接受）
+_tts_lock = asyncio.Lock()
 try:
     import torch
     if torch.cuda.is_available():
@@ -198,6 +246,8 @@ async def handler(ws):
     speed = 0.9   # TTS 语速，可被 session.update 按角色覆盖
     # 对话历史（纯文本）：没有它模型每轮都是"失忆"状态，答非所问、反复重开话题
     history: deque = deque(maxlen=HISTORY_TURNS * 2)
+    state = ConnState()   # 本连接独立的视觉状态（帧缓冲/场景历史/最新帧）
+    prober = asyncio.ensure_future(scene_prober(state))
 
     try:
         async for raw in ws:
@@ -226,27 +276,36 @@ async def handler(ws):
             elif t == "input_image_buffer.append":
                 img = msg.get("image")
                 if img:
-                    frame_buffer.append(img)
-                    last_frame["img"] = img
-                    last_frame["probed"] = False
-                    with open("/tmp/camera_latest.jpg", "wb") as f:
+                    state.frame_buffer.append(img)
+                    state.last_frame["img"] = img
+                    state.last_frame["probed"] = False
+                    # 调试落盘：每连接一个文件，避免多连接互相覆盖
+                    with open(f"/tmp/camera_latest_{id(ws)}.jpg", "wb") as f:
                         f.write(base64.b64decode(img))
 
             elif t == "input_audio_buffer.append":
                 pcm = base64.b64decode(msg.get("audio", ""))
+                _reload_gate_if_changed()
+                if not _gate_feeds(pcm):
+                    # 门禁关闭（未唤醒）：丢弃；半截语音清掉，防唤醒后混入旧片段
+                    if buf.talking:
+                        buf.get_and_clear()
+                    continue
                 if buf.add(pcm):
-                    await process(ws, buf, instructions, voice, speed, history)
+                    await process(ws, buf, instructions, voice, speed, history, state)
 
             elif t == "input_audio_buffer.commit":
-                await process(ws, buf, instructions, voice, speed, history)
+                await process(ws, buf, instructions, voice, speed, history, state)
 
             elif t == "response.cancel":
                 pass
     except websockets.ConnectionClosed:
         pass
+    finally:
+        prober.cancel()
 
 async def process(ws, buf, instructions, voice=DEFAULT_VOICE, speed=0.9,
-                  history=None):
+                  history=None, state=None):
     pcm, speech = buf.get_and_clear()
     # 双保险：整段至少 0.3s，且其中"超过阈值"的音频至少 0.4s——
     # 单个噪音尖峰（风扇/电流声）凑不够 0.4s，直接丢弃，避免 whisper 对着纯噪音幻觉出句子
@@ -262,57 +321,67 @@ async def process(ws, buf, instructions, voice=DEFAULT_VOICE, speed=0.9,
     log.info(f"STT[{STT_BACKEND}]({time.time()-t0:.1f}s): {text}")
     await ws.send(json.dumps({"type": "conversation.item.input_audio_transcription.completed", "transcript": text}))
 
-    # system prompt：原始 instructions + 场景文本历史（较早的上下文）
-    sys_prompt = instructions or ""
-    if scene_history:
-        sys_prompt += ("\n\nSCENE HISTORY (what happened earlier, oldest to newest):\n"
-                       + "\n".join(f"- {s}" for s in scene_history))
+    # 文本门禁（方案 A）：不在指令表内则拒识——canned 话术直接 TTS（不经 LLM），否则静默
+    decision = GATE.check_text(text)
+    from_llm = decision.allowed
+    if not decision.allowed:
+        log.info(f"Gate 拒识({decision.reason}): {text}")
+        if not decision.canned_reply:
+            await ws.send(json.dumps({"type": "response.audio.done", "response_id": "none"}))
+            return
+        reply = clean_text(decision.canned_reply)
+    else:
+        # system prompt：原始 instructions + 场景文本历史（较早的上下文）
+        sys_prompt = instructions or ""
+        if state.scene_history:
+            sys_prompt += ("\n\nSCENE HISTORY (what happened earlier, oldest to newest):\n"
+                           + "\n".join(f"- {s}" for s in state.scene_history))
 
-    # user content：最近 N 帧原图（旧→新）+ 文本
-    images = list(frame_buffer)
-    # messages：system + 最近几轮对话历史（纯文本，不带图）+ 当前输入
-    msgs = [{"role": "system", "content": sys_prompt}]
-    if history:
-        msgs.extend(history)
-    async with httpx.AsyncClient(timeout=60) as cli:
-        if images:
-            content = [
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img}"}}
-                for img in images
-            ]
-            content.append({"type": "text", "text": (
-                f"These are the last {len(images)} camera frames (oldest to newest). "
-                f"The child said: {text}. Respond naturally.")})
-            msgs.append({"role": "user", "content": content})
-            payload = {
-                "model": "gemma4",
-                "messages": msgs,
-            }
-        else:
-            msgs.append({"role": "user", "content": text})
-            payload = {
-                "model": "gemma4",
-                "messages": msgs,
-            }
-        log.info(f"LLM request: images={len(images)} history={len(scene_history)} text={text[:30]}")
-        resp = await cli.post(LLM, json=payload)
-        if resp.status_code != 200:
-            reply = "Sorry, I did not catch that."
-        else:
-            try:
-                reply = resp.json()["choices"][0]["message"]["content"].strip()
-            except (KeyError, IndexError):
-                reply = "Sorry, I missed that."
-    reply = clean_text(reply)
-    log.info(f"LLM({time.time()-t0:.1f}s): {reply}")
+        # user content：最近 N 帧原图（旧→新）+ 文本
+        images = list(state.frame_buffer)
+        # messages：system + 最近几轮对话历史（纯文本，不带图）+ 当前输入
+        msgs = [{"role": "system", "content": sys_prompt}]
+        if history:
+            msgs.extend(history)
+        async with httpx.AsyncClient(timeout=60) as cli:
+            if images:
+                content = [
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img}"}}
+                    for img in images
+                ]
+                content.append({"type": "text", "text": (
+                    f"These are the last {len(images)} camera frames (oldest to newest). "
+                    f"The child said: {text}. Respond naturally.")})
+                msgs.append({"role": "user", "content": content})
+                payload = {
+                    "model": "gemma4",
+                    "messages": msgs,
+                }
+            else:
+                msgs.append({"role": "user", "content": text})
+                payload = {
+                    "model": "gemma4",
+                    "messages": msgs,
+                }
+            log.info(f"LLM request: images={len(images)} history={len(state.scene_history)} text={text[:30]}")
+            resp = await cli.post(LLM, json=payload)
+            if resp.status_code != 200:
+                reply = "Sorry, I did not catch that."
+            else:
+                try:
+                    reply = resp.json()["choices"][0]["message"]["content"].strip()
+                except (KeyError, IndexError):
+                    reply = "Sorry, I missed that."
+        reply = clean_text(reply)
+        log.info(f"LLM({time.time()-t0:.1f}s): {reply}")
 
     if not reply:
         # 整段回复都是舞台指令，剥完为空——跳过本次播报
         await ws.send(json.dumps({"type": "response.audio.done", "response_id": "none"}))
         return
 
-    # 记入对话历史（只存文本，图像不重发），供后续轮次引用
-    if history is not None:
+    # 记入对话历史（只存文本，图像不重发），供后续轮次引用；拒识话术不进历史
+    if history is not None and from_llm:
         history.append({"role": "user", "content": text})
         history.append({"role": "assistant", "content": reply})
 
@@ -335,35 +404,39 @@ async def process(ws, buf, instructions, voice=DEFAULT_VOICE, speed=0.9,
             }))
 
     # 边合成边发：kokoro 逐句产出，首句合成完就开始出声
+    # 全局锁串行化：kokoro_pipe 单例的同步生成器不能被两个协程同时驱动，
+    # 锁内含发送（单句 0.3-0.5s，多连接排队可接受），流式行为不变
     total = 0.0
-    try:
-        for _gs, _ps, audio in kokoro_pipe(reply, voice=voice, speed=speed):
-            total += len(audio) / 24000
-            await send_audio(audio)
-    except Exception as e:
-        if total == 0:
-            # 音色不可用（如离线缓存缺失）时回退默认音色，不让对话中断
-            log.warning(f"TTS voice {voice} failed ({e}) — fallback to {DEFAULT_VOICE}")
-            for _gs, _ps, audio in kokoro_pipe(reply, voice=DEFAULT_VOICE, speed=speed):
+    async with _tts_lock:
+        try:
+            for _gs, _ps, audio in kokoro_pipe(reply, voice=voice, speed=speed):
                 total += len(audio) / 24000
                 await send_audio(audio)
-        else:
-            log.warning(f"TTS mid-stream error: {e}")
+        except Exception as e:
+            if total == 0:
+                # 音色不可用（如离线缓存缺失）时回退默认音色，不让对话中断
+                log.warning(f"TTS voice {voice} failed ({e}) — fallback to {DEFAULT_VOICE}")
+                for _gs, _ps, audio in kokoro_pipe(reply, voice=DEFAULT_VOICE, speed=speed):
+                    total += len(audio) / 24000
+                    await send_audio(audio)
+            else:
+                log.warning(f"TTS mid-stream error: {e}")
     await ws.send(json.dumps({"type": "response.audio.done", "response_id": rid}))
     log.info(f"TTS({time.time()-t0:.1f}s): {total:.1f}s")
 
-async def scene_prober():
+async def scene_prober(state):
     """周期性把最新帧发给 VLM 生成一句场景描述，滚入 scene_history。
 
     这样更早的画面以文本形式累积进上下文，配合 frame_buffer 里
     最近几帧原图，模拟 Qwen-Omni 会话内图像累积的效果。
+    每连接一个 prober 任务，只探测本连接的 last_frame。
     """
     while True:
         await asyncio.sleep(SCENE_PROBE_INTERVAL)
-        img = last_frame["img"]
-        if not img or last_frame["probed"]:
+        img = state.last_frame["img"]
+        if not img or state.last_frame["probed"]:
             continue
-        last_frame["probed"] = True
+        state.last_frame["probed"] = True
         try:
             async with httpx.AsyncClient(timeout=60) as cli:
                 resp = await cli.post(LLM, json={
@@ -381,13 +454,12 @@ async def scene_prober():
                     continue
                 desc = clean_text(resp.json()["choices"][0]["message"]["content"])
                 if desc:
-                    scene_history.append(f"{time.strftime('%H:%M')} {desc}")
+                    state.scene_history.append(f"{time.strftime('%H:%M')} {desc}")
                     log.info(f"Scene: {desc}")
         except Exception as e:
             log.warning(f"scene probe failed: {e}")
 
 async def main():
-    asyncio.ensure_future(scene_prober())
     async with websockets.serve(handler, "0.0.0.0", 8765, ping_interval=None):
         log.info("Pipeline WS on :8765")
         await asyncio.Future()

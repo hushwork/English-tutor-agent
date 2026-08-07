@@ -97,8 +97,10 @@ def main() -> None:
     print("✓ /rtc/offer → 409 when WebRTC mode not enabled")
 
     # Register a manager (what agent._start_dashboard does) and retry
-    set_rtc_manager(RTCDeviceManager())
-    get_rtc_manager().audio.start()
+    # 多会话模型：audio seam 属于每个 RTCSession（offer 时创建），经 hook 启动
+    manager = RTCDeviceManager()
+    manager.set_session_hooks(on_created=lambda s: s.audio.start())
+    set_rtc_manager(manager)
     asyncio.run(rtc_client())
 
     # 400 on malformed body

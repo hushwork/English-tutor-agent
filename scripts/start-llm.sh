@@ -25,7 +25,7 @@ esac
 
 echo "启动 $MODEL ..."
 pkill -f "llama-server" 2>/dev/null; sleep 2
-eval exec $LLAMA $M_FLAG --host 127.0.0.1 --port 8080 -c 4096 --no-webui --n-gpu-layers all $CT_FLAG > logs/llama.log 2>&1 &
+eval exec $LLAMA $M_FLAG --host 127.0.0.1 --port 8080 -c "${LLAMA_CTX:-8192}" -np "${LLAMA_PARALLEL:-4}" --no-webui --n-gpu-layers all $CT_FLAG > logs/llama.log 2>&1 &
 sleep 6
 echo "GPU: $(nvidia-smi --query-gpu=memory.used --format=csv,noheader)"
 echo "✅ $MODEL :8080"

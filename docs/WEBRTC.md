@@ -18,9 +18,11 @@ WebRTC 模式不改任何对话逻辑，而是用三个 duck-typed 类替换本�
 | `RTCFrameSource` | `camera.CameraPipeline` | `read_frame()` → `(ok, BGR ndarray)` |
 | `RTCDeviceManager` | —（新增） | 持有 peer connection 与上面两个替身 |
 
-接线点在 `camera_tutor/agent.py` `setup()`：`av_source="webrtc"` 时
-`self.audio` / `self.camera` 直接指向 RTC 替身，之后的 VAD/ASR/LLM/TTS/视觉
-代码完全复用。
+接线点在 `camera_tutor/agent.py`：`av_source="webrtc"` 时运行时不直接持有
+音视频对象，而是给 `RTCDeviceManager` 注册 session 钩子——每路浏览器 peer
+接入即创建一个 `PracticeSession`（`camera_tutor/practice_session.py`），
+拿到该 peer 自己的 `RTCAudioManager`/`RTCFrameSource` 后独立跑
+VAD/ASR/LLM/TTS/视觉全链路。多用户并发时各会话完全隔离。
 
 ### 线程模型
 
@@ -39,7 +41,15 @@ WebRTC 模式不改任何对话逻辑，而是用三个 duck-typed 类替换本�
   不配 TURN 必然打不通（2026-08-06 实锤）。
 - 可选鉴权：环境变量 `RTC_TOKEN` 设置后，`/rtc/offer` 和 `/rtc/config` 均要求
   `Authorization: Bearer <token>`；页面侧用 `?token=xxx` 传递。
-- 单 peer：新 offer 会顶掉旧连接（`rtc_device.py:481-483`）。
+- **多用户并发**（2026-08-07 起）：每个 offer 创建独立的 `RTCSession`
+  （自己的 peer connection + 音频/视频替身），互不干扰；同一 `user_id`
+  重复连接只替换该用户自己的旧 session。offer 请求体带 `user_id`
+  （`face_preview.html?user=xxx`，非法 ID 返回 400，缺省为 `default`），
+  应答带 `session_id`/`user_id`。学习数据按用户隔离在
+  `.camera-tutor-data/{user_id}/`；viseme/摄像头画面经 `/ws/emma/face?user=xxx`
+  按用户路由。并发规模受模型后端限制：本地 llama-server 用
+  `LLAMA_PARALLEL`（启动脚本 `-np`，默认 4 槽）调并发槽，单卡实际 2–4 人；
+  更多人走云端 MaaS（不设 `OMNI_WS_URL`）。
 - **dashboard 必须与 agent 同进程**：RTC manager 通过模块级注册表
   （`set_rtc_manager`）在同进程内共享。若端口已被独立 dashboard 占用，
   WebRTC 模式下 agent 会报错退出（`agent.py:636-643`）。
@@ -155,18 +165,20 @@ getUserMedia 音频处理（`GET/POST /api/device/audio-settings`，持久化在
 
 ## 5. 测试
 
-三个测试均为独立脚本（直接 `python3` 运行，非 pytest），全部实测通过：
+测试均为独立脚本（直接 `python3` 运行，非 pytest），全部实测通过：
 
 | 脚本 | 层次 | 内容 | 外部依赖 |
 |------|------|------|---------|
 | `tests/test_rtc_device.py` | 单元 | 重采样对齐、mic FIFO/增益/电平、spk 环形缓冲/欠载补零、viseme 调度、帧拷贝语义 | 无 |
 | `tests/test_rtc_loopback.py` | 进程内回环 | 第二个 `RTCPeerConnection` 模拟浏览器（正弦波假 mic + 绿屏假摄像头），走完真实 offer/answer/ICE/DTLS，验证 mic 上行、TTS 下行、viseme、摄像头帧四条链路 | 无（走真实 UDP/ICE，耗时几秒） |
+| `tests/test_rtc_multiuser.py` | 多用户并发 | 两用户同时接入不互踢、会话间音频隔离、同用户重连只换自己、断连只清理自己、user_id 校验 | 无 |
 | `tests/test_rtc_signaling.py` | HTTP 端到端 | 8299 端口真实起 uvicorn，测 409（未启用 RTC）、完整握手、400（畸形 body） | `httpx`、本地端口 |
 | `tests/test_rtc_browser.py` | **真实浏览器** | headless Chrome（假麦克风/摄像头设备）打开真实 `face_preview.html?device=1` 页面并点击开始，验证：页面连接状态、服务端 peer、mic 上行有声、摄像头帧、浏览器 RTP 统计（TTS 下行字节 > 0） | `playwright` + 系统 Chrome |
 
 ```bash
 .venv/bin/python tests/test_rtc_device.py
 .venv/bin/python tests/test_rtc_loopback.py
+.venv/bin/python tests/test_rtc_multiuser.py
 .venv/bin/python tests/test_rtc_signaling.py
 .venv/bin/python tests/test_rtc_browser.py   # 最接近真实设备的自动化验证
 ```
@@ -194,7 +206,10 @@ getUserMedia 音频处理（`GET/POST /api/device/audio-settings`，持久化在
       **已支持 TURN 中转**（2026-08-06，`RTC_TURN_*` env + `/rtc/config` 下发，
       手机蜂窝 CGNAT 环境实测连通）
 - [ ] **无 ICE 重启 / Trickle ICE**：网络切换（Wi-Fi ↔ 蜂窝）后只能靠前端整体重连
-- [ ] **单 peer**：新连接顶掉旧连接，不支持多设备同时接入
+- [x] ~~**单 peer**：新连接顶掉旧连接，不支持多设备同时接入~~
+      **已支持多用户并发**（2026-08-07）：每 offer 一个独立 `RTCSession` +
+      `PracticeSession`，学习数据按 `user_id` 隔离；本地 llama-server 并发槽
+      用 `LLAMA_PARALLEL` 调（单卡实际 2–4 人，更多人走云端 MaaS）
 - [ ] **无 RTCDataChannel**：控制信令复用 WebSocket `/ws/emma/face`（设计选择，
       但若未来要走数据通道需新增通路）
 - [x] ~~真实设备验证程度未知~~ **自动化真实浏览器验证已通过**（2026-08-05，

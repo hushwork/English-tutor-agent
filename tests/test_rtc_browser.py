@@ -65,9 +65,11 @@ def main() -> None:
     from playwright.sync_api import sync_playwright
 
     manager = RTCDeviceManager()
+    # 多会话模型：audio/camera seam 属于每个 RTCSession（offer 时创建），
+    # 经 session hook 启动（对应 agent._on_rtc_session_created）
+    manager.set_session_hooks(
+        on_created=lambda s: (s.audio.start(), s.camera.start()))
     set_rtc_manager(manager)
-    manager.audio.start()
-    manager.camera.start()
     start_server()
 
     with sync_playwright() as pw:
@@ -81,7 +83,7 @@ def main() -> None:
             ],
         )
         page = browser.new_page()
-        page.goto(f"{BASE}/static/face_preview.html?device=1")
+        page.goto(f"{BASE}/static/face_preview.html?device=1&user=tester")
         page.click("#startBtn")
 
         # 1. Page reports connected
@@ -93,23 +95,25 @@ def main() -> None:
         print("✓ page connected (status + connection indicator)")
 
         # 2. Server side sees the peer
-        wait_for(lambda: manager.audio._peer_connected, "server peer_connected")
+        session = wait_for(lambda: next(iter(manager.sessions.values()), None),
+                           "RTC session registered")
+        wait_for(lambda: session.audio._peer_connected, "server peer_connected")
         print("✓ server: peer connected")
 
         # 3. Mic uplink: fake device tone → read_mic() yields non-silent PCM
         def mic_loud():
-            pcm = manager.audio.read_mic()
+            pcm = session.audio.read_mic()
             if not pcm:
                 return False
             arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
             return float(np.sqrt(np.mean(arr ** 2))) > 50.0
         wait_for(mic_loud, "mic uplink with audible signal")
         print(f"✓ mic uplink: browser → read_mic(), level "
-              f"{manager.audio.mic_level_dbfs:.1f} dBFS")
+              f"{session.audio.mic_level_dbfs:.1f} dBFS")
 
         # 4. Camera uplink: fake video → read_frame() yields frames
-        ok, frame = wait_for(lambda: manager.camera.read_frame()[0] and
-                             manager.camera.read_frame(),
+        ok, frame = wait_for(lambda: session.camera.read_frame()[0] and
+                             session.camera.read_frame(),
                              "camera uplink frames")
         assert ok and frame is not None and frame.size > 0
         print(f"✓ camera uplink: browser → read_frame() {frame.shape}")
@@ -118,7 +122,7 @@ def main() -> None:
         pcm24 = (np.sin(2 * np.pi * 440 * np.arange(24000) / 24000)
                  * 8000).astype(np.int16).tobytes()
         for i in range(0, len(pcm24), 480 * 2 * 10):  # feed in ~200ms chunks
-            manager.audio.write_spk(pcm24[i:i + 480 * 2 * 10])
+            session.audio.write_spk(pcm24[i:i + 480 * 2 * 10])
             time.sleep(0.05)
 
         stats = wait_for(lambda: page.evaluate("""async () => {

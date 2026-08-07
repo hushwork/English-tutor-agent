@@ -414,6 +414,15 @@ class RTCAudioManager:
     def is_running(self) -> bool:
         return self._started
 
+    @property
+    def mic_attached(self) -> bool:
+        """是否有远端 mic track 在消费（供 dashboard 设备状态用）。"""
+        return self._mic_task is not None
+
+    @property
+    def peer_connected(self) -> bool:
+        return self._peer_connected
+
 
 class _TTSOutTrack(AudioStreamTrack):
     """aiortc outbound audio track: pulls TTS PCM from RTCAudioManager.
@@ -523,6 +532,11 @@ class RTCFrameSource:
                 return False, None
             return True, self._latest.copy()
 
+    @property
+    def camera_attached(self) -> bool:
+        """是否有远端视频轨在消费（供 dashboard 设备状态用）。"""
+        return self._task is not None
+
 
 # ── RTCSession / RTCDeviceManager ─────────────────────────────────
 
@@ -567,9 +581,9 @@ class RTCSession:
 class RTCDeviceManager:
     """并发 WebRTC 会话注册表 —— 每路浏览器连接一个 RTCSession。
 
-    多用户并发：新 offer 创建新 session，不再踢掉旧连接。
-    唯一例外：同一 user_id 重复连接时替换该用户的旧 session
-    （同一用户开两个标签页，后开的生效）。
+    多用户并发：新用户的 offer 创建新 session，互不影响。
+    同一 user_id 重复 offer 走重挂路径（见 handle_offer）：复用该用户的
+    seam 对象，仅替换 peer connection，上层 PracticeSession 无感知。
     """
 
     def __init__(self, mic_gain: float = DEFAULT_MIC_GAIN,
@@ -604,29 +618,42 @@ class RTCDeviceManager:
         """Handle a browser SDP offer; return the answer as a dict.
 
         Runs in the uvicorn event loop (called from the FastAPI endpoint).
-        每个 offer 创建独立的 RTCSession；返回值带 session_id/user_id
-        （浏览器可忽略多余字段，兼容旧版前端）。
+        新用户创建独立 RTCSession；同一 user_id 重复 offer 走重挂路径
+        （复用 seam 对象，只换 peer connection）。返回值带 session_id/
+        user_id（浏览器可忽略多余字段，兼容旧版前端）。
         """
         user_id = validate_user_id(user_id)
         if self._offer_lock is None:
             self._offer_lock = asyncio.Lock()
         async with self._offer_lock:
-            # 同一用户重复连接：替换其旧 session（不影响其他用户）
-            for s in list(self._sessions.values()):
-                if s.user_id == user_id:
-                    logger.info("RTC: user %s reconnected — closing old session %s",
-                                user_id, s.session_id)
-                    await self._close_session(s)
+            # 同一用户重复连接（网络抖动重连/页面刷新/第二个标签页）：
+            # 保留 seam 对象与上层 PracticeSession，只替换 peer connection——
+            # 对话上下文、模型 WS、TTS 队列、viseme 状态全部不受影响。
+            # （旧行为是整体拆掉重建，公网 ICE 抖动时表现为"对话断断续续"）
+            session = next(
+                (s for s in self._sessions.values() if s.user_id == user_id),
+                None)
+            is_reattach = session is not None
+            if is_reattach:
+                logger.info("RTC: user %s re-attaching session %s (new peer)",
+                            user_id, session.session_id)
+                old_pc, session._pc = session._pc, None
+                if old_pc is not None:
+                    try:
+                        await old_pc.close()
+                    except Exception as e:
+                        logger.debug("RTC old peer close error: %s", e)
+            else:
+                session = RTCSession(
+                    session_id=uuid.uuid4().hex[:12],
+                    user_id=user_id,
+                    mic_gain=self._mic_gain,
+                    viseme_lead_ms=self._viseme_lead_ms,
+                )
+                self._sessions[session.session_id] = session
 
-            session = RTCSession(
-                session_id=uuid.uuid4().hex[:12],
-                user_id=user_id,
-                mic_gain=self._mic_gain,
-                viseme_lead_ms=self._viseme_lead_ms,
-            )
             pc = RTCPeerConnection(configuration=_rtc_configuration())
             session._pc = pc
-            self._sessions[session.session_id] = session
 
             @pc.on("track")
             def on_track(track):
@@ -640,6 +667,8 @@ class RTCDeviceManager:
                 logger.info("RTC [%s/%s] state: %s",
                             session.user_id, session.session_id,
                             pc.connectionState)
+                if session._pc is not pc:
+                    return  # 被替换掉的旧 peer 的迟到事件，不影响当前连接
                 if self._sessions.get(session.session_id) is not session:
                     return  # 旧 session 的迟到事件，不影响新 session 状态
                 if pc.connectionState == "connected":
@@ -655,10 +684,11 @@ class RTCDeviceManager:
                 RTCSessionDescription(sdp=sdp, type=offer_type))
             answer = await pc.createAnswer()
             await pc.setLocalDescription(answer)
-            logger.info("RTC peer established: user=%s session=%s (%d active)",
-                        user_id, session.session_id, len(self._sessions))
+            logger.info("RTC peer established: user=%s session=%s (%d active)%s",
+                        user_id, session.session_id, len(self._sessions),
+                        " [reattach]" if is_reattach else "")
 
-        if self._on_session_created is not None:
+        if not is_reattach and self._on_session_created is not None:
             try:
                 self._on_session_created(session)
             except Exception:

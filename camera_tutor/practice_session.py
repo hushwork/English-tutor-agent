@@ -377,6 +377,8 @@ class PracticeSession:
                 # error detection or vocabulary extraction on it.
                 if self.memory:
                     self.memory.save_message("user", transcript)
+                self._log_report_event("child_spoke",
+                                       {"transcript": transcript[:200]})
 
         elif event_type == "error":
             err = event.get("error", {})

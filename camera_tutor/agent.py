@@ -280,7 +280,13 @@ class CameraTutorAgent:
     # ── RTC session hooks（uvicorn 事件循环线程，同步调用）────────
 
     def _on_rtc_session_created(self, rtc_session) -> None:
-        """一路新 WebRTC peer：拉起独立的 PracticeSession。"""
+        """一路新 WebRTC peer：拉起独立的 PracticeSession。
+
+        reporter 用 dashboard_server 的 per-user 注册表——WebRTC 模式下
+        dashboard 与本进程同生共死，共享实例后 /api/report/* 才能看到
+        当天的事件（report 数据在引擎内存里，隔天 rollover 才落盘）。
+        """
+        from camera_tutor.dashboard_server import report_engine_for
         rtc_session.audio.start()
         camera = None
         if self.config.camera_enabled:
@@ -292,7 +298,7 @@ class CameraTutorAgent:
             session_id=rtc_session.session_id,
             audio=rtc_session.audio,
             camera=camera,
-            reporter=self.reporter,
+            reporter=report_engine_for(rtc_session.user_id),
             reporter_lock=self._reporter_lock,
         )
         with self._sessions_lock:

@@ -98,6 +98,15 @@ def _report_for(user: str) -> ParentReportEngine:
         _report_by_user[uid] = ParentReportEngine(user_id=uid)
     return _report_by_user[uid]
 
+
+def report_engine_for(user_id: str) -> ParentReportEngine:
+    """供同进程的 agent/PracticeSession 使用：与 HTTP 端点共享同一份引擎实例。
+
+    report 数据在引擎的内存 _log 里（隔天 rollover 才落盘），所以事件必须
+    写进 dashboard 自己服务的那几个实例，否则 /api/report/* 永远是空的。
+    """
+    return _report_for(user_id)
+
 # Tutor personas
 from camera_tutor.tutor_personas import (
     list_tutors, get_active_tutor, set_active_tutor, get_child_age, set_child_age,
@@ -260,8 +269,30 @@ async def get_timeline(date: Optional[str] = None, user: str = ""):
 
 @app.get("/api/device/status")
 async def get_device_status():
-    """Get current device status."""
-    return _device_state
+    """Get current device status.
+
+    WebRTC 模式下 camera/mic 连接状态从 RTC manager 的活跃会话实时推导，
+    并附带每用户会话明细（mic 电平可用于"麦克风没声"的快速诊断）。
+    静态字段（音量/tutor 状态等）保持原样。
+    """
+    state = dict(_device_state)
+    from camera_tutor.rtc_device import get_rtc_manager
+    mgr = get_rtc_manager()
+    if mgr is not None:
+        sessions = []
+        for s in mgr.sessions.values():
+            sessions.append({
+                "user_id": s.user_id,
+                "session_id": s.session_id,
+                "peer_connected": s.audio.peer_connected,
+                "mic": s.audio.mic_attached,
+                "camera": s.camera.camera_attached,
+                "mic_dbfs": round(s.audio.mic_level_dbfs, 1),
+            })
+        state["sessions"] = sessions
+        state["camera_connected"] = any(s["camera"] for s in sessions)
+        state["microphone_connected"] = any(s["mic"] for s in sessions)
+    return state
 
 
 @app.post("/api/device/settings")

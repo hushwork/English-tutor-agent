@@ -88,11 +88,11 @@ def _reload_gate_if_changed(force=False):
 
 _gate_error_logged = False
 
-def _gate_feeds(pcm_bytes) -> bool:
+def _gate_feeds(gate, pcm_bytes) -> bool:
     """KWS 音频门：返回 False 表示未唤醒，音频应丢弃。异常时放行（不影响对话）。"""
     global _gate_error_logged
     try:
-        return GATE.feed_audio(np.frombuffer(pcm_bytes, dtype=np.int16))
+        return gate.feed_audio(np.frombuffer(pcm_bytes, dtype=np.int16))
     except Exception as e:
         if not _gate_error_logged:   # 每进程只报一次，避免刷日志
             _gate_error_logged = True
@@ -122,14 +122,39 @@ def get_whisper():
 # faster-whisper 线程安全度有限，多连接经 to_thread 并发调用时串行化 transcribe
 _stt_lock = threading.Lock()
 
+# STT 拒答/解释性元话语过滤：gemma 是 chat 模型，听到非英语/噪音时爱输出
+# "I'm sorry, I cannot transcribe..." 之类解释而不是空——这类文本绝不能进对话
+_STT_META_RE = re.compile(
+    r"cannot transcribe|can'?t transcribe|unable to transcribe|not in english|"
+    r"no (clear )?(english )?speech|i'?m sorry|i apologize|"
+    r"only (noise|silence)|does not contain|no audible",
+    re.IGNORECASE)
+
+def _is_stt_meta(text: str) -> bool:
+    return bool(_STT_META_RE.search(text))
+
 def stt_whisper_sync(pcm) -> str:
     tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     soundfile.write(tmp.name, pcm, SR)
     # vad_filter=True：whisper 内置 Silero VAD 先剔除非语音区域，抑制噪音幻觉
+    # 不强制 language="en"：强制英文会让 whisper 把中文语音幻听成英文。
+    # 靠语言检测 + 置信度门禁甄别（whisper 的幻觉全是低置信，可挡）
     with _stt_lock:
-        segs, _ = get_whisper().transcribe(tmp.name, language="en", beam_size=3, vad_filter=True)
+        segs, info = get_whisper().transcribe(tmp.name, beam_size=3, vad_filter=True)
     os.unlink(tmp.name)
-    return " ".join(s.text.strip() for s in segs)
+    if info.language != "en" or info.language_probability < 0.6:
+        log.info(f"whisper 拒识: 检测到 {info.language}"
+                 f"(p={info.language_probability:.2f})，非英语不入对话")
+        return ""
+    out = []
+    for s in segs:
+        # no_speech_prob 高或 avg_logprob 低的段是典型幻觉（噪音/含糊语音）
+        if s.no_speech_prob > 0.6 or s.avg_logprob < -1.0:
+            log.info(f"whisper 丢弃低置信段(no_speech={s.no_speech_prob:.2f} "
+                     f"logprob={s.avg_logprob:.2f}): {s.text.strip()[:40]}")
+            continue
+        out.append(s.text.strip())
+    return " ".join(out)
 
 async def stt_gemma(pcm) -> str:
     """整段语音送本地 LLM 的音频输入转写（llama-server 多模态）。"""
@@ -141,17 +166,26 @@ async def stt_gemma(pcm) -> str:
         "messages": [{"role": "user", "content": [
             {"type": "input_audio", "input_audio": {
                 "data": base64.b64encode(buf.getvalue()).decode(), "format": "wav"}},
-            {"type": "text", "text": "Transcribe this English audio exactly. "
-                                     "Output only the transcription. "
-                                     "If the audio contains no clear English speech "
-                                     "(only noise or silence), output nothing."}]}],
+            {"type": "text", "text": "Transcribe this audio exactly. "
+                                     "Output only the verbatim transcription. "
+                                     "If the speech is not English, or the audio is "
+                                     "only noise, music or silence, output nothing "
+                                     "at all — no explanation, no apology."}]}],
         "max_tokens": 200, "temperature": 0.0,
     }
     async with httpx.AsyncClient(timeout=60) as cli:
         r = await cli.post(LLM, json=payload)
         r.raise_for_status()
         raw = r.json()["choices"][0]["message"]["content"] or ""
-    return clean_text(raw).strip('" ').strip()
+    text = clean_text(raw).strip('" ').strip()
+    if text and _is_stt_meta(text):
+        log.info(f"gemma 拒答文本已过滤: {text[:60]}")
+        return ""
+    if text and not re.search(r"[A-Za-z]{2,}", text):
+        # 无实质内容（纯标点/乱码，gemma 对听不清的音频的常见输出）
+        log.info(f"gemma 无效转写已过滤: {text[:40]!r}")
+        return ""
+    return text
 
 async def stt(pcm) -> str:
     if STT_BACKEND == "gemma":
@@ -248,6 +282,10 @@ async def handler(ws):
     # 对话历史（纯文本）：没有它模型每轮都是"失忆"状态，答非所问、反复重开话题
     history: deque = deque(maxlen=HISTORY_TURNS * 2)
     state = ConnState()   # 本连接独立的视觉状态（帧缓冲/场景历史/最新帧）
+    # 本连接独立的门禁状态（KWS 开门窗口/帧缓冲/文本窗口各连接隔离）；
+    # 全局 GATE 只是配置模板，热重载后（mtime 变化）重建本连接的门禁
+    gate = GATE.new_session()
+    gate_stamp = _GATE_MTIME
     prober = asyncio.ensure_future(scene_prober(state))
 
     try:
@@ -287,16 +325,19 @@ async def handler(ws):
             elif t == "input_audio_buffer.append":
                 pcm = base64.b64decode(msg.get("audio", ""))
                 _reload_gate_if_changed()
-                if not _gate_feeds(pcm):
+                if _GATE_MTIME != gate_stamp:   # 配置热重载：重建本连接门禁
+                    gate = GATE.new_session()
+                    gate_stamp = _GATE_MTIME
+                if not _gate_feeds(gate, pcm):
                     # 门禁关闭（未唤醒）：丢弃；半截语音清掉，防唤醒后混入旧片段
                     if buf.talking:
                         buf.get_and_clear()
                     continue
                 if buf.add(pcm):
-                    await process(ws, buf, instructions, voice, speed, history, state)
+                    await process(ws, buf, instructions, voice, speed, history, state, gate)
 
             elif t == "input_audio_buffer.commit":
-                await process(ws, buf, instructions, voice, speed, history, state)
+                await process(ws, buf, instructions, voice, speed, history, state, gate)
 
             elif t == "response.cancel":
                 pass
@@ -306,7 +347,7 @@ async def handler(ws):
         prober.cancel()
 
 async def process(ws, buf, instructions, voice=DEFAULT_VOICE, speed=0.9,
-                  history=None, state=None):
+                  history=None, state=None, gate=None):
     pcm, speech = buf.get_and_clear()
     # 双保险：整段至少 0.3s，且其中"超过阈值"的音频至少 0.4s——
     # 单个噪音尖峰（风扇/电流声）凑不够 0.4s，直接丢弃，避免 whisper 对着纯噪音幻觉出句子
@@ -323,7 +364,7 @@ async def process(ws, buf, instructions, voice=DEFAULT_VOICE, speed=0.9,
     await ws.send(json.dumps({"type": "conversation.item.input_audio_transcription.completed", "transcript": text}))
 
     # 文本门禁（方案 A）：不在指令表内则拒识——canned 话术直接 TTS（不经 LLM），否则静默
-    decision = GATE.check_text(text)
+    decision = (gate or GATE).check_text(text)
     from_llm = decision.allowed
     if not decision.allowed:
         log.info(f"Gate 拒识({decision.reason}): {text}")

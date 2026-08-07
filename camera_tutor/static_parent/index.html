@@ -506,21 +506,30 @@ document.getElementById('dateDisplay').textContent = new Date().toLocaleDateStri
 });
 
 // ── Data Loading ───────────────────────────────────────────────
-// 用户过滤：空串 = 全部（legacy 全局数据）；切换后重新拉取
-let currentUser = '';
+// 用户过滤：空串 = 全部（legacy 全局数据）；切换后重新拉取。
+// 选择持久化在 localStorage；首次打开默认选第一个真实用户
+// （多用户改造后数据都在 per-user 目录，legacy 视图基本是空的）
+let currentUser = localStorage.getItem('dash_user') || null;
 function userQuery() { return currentUser ? '?user=' + encodeURIComponent(currentUser) : ''; }
 async function loadUsers() {
   try {
     const resp = await fetch('/api/users');
     const data = await resp.json();
+    const users = data.users || [];
     const sel = document.getElementById('userSelect');
     sel.innerHTML = '<option value="">全部（legacy）</option>' +
-      (data.users || []).map(u => `<option value="${escapeHtml(u)}">👤 ${escapeHtml(u)}</option>`).join('');
+      users.map(u => `<option value="${escapeHtml(u)}">👤 ${escapeHtml(u)}</option>`).join('');
+    if (currentUser === null) {
+      // 首次：默认选第一个非 default 的真实用户
+      currentUser = users.find(u => u !== 'default') || users[0] || '';
+    }
+    if (currentUser && !users.includes(currentUser)) currentUser = '';  // 用户已被删
     sel.value = currentUser;
   } catch(e) { console.error('Failed to load users:', e); }
 }
 document.getElementById('userSelect').addEventListener('change', function() {
   currentUser = this.value;
+  localStorage.setItem('dash_user', currentUser);
   loadToday();
   loadWords();
 });
@@ -613,12 +622,21 @@ async function loadDeviceStatus() {
     const resp = await fetch('/api/device/status');
     const data = await resp.json();
     const ds = document.getElementById('deviceStatus');
-    ds.innerHTML = `
+    let html = `
       <div class="status-chip">📷 Camera: ${data.camera_connected?'✅':'❌'}</div>
       <div class="status-chip">🎤 Mic: ${data.microphone_connected?'✅':'❌'}</div>
       <div class="status-chip">📶 WiFi: ${data.wifi_connected?'✅':'❌'}</div>
       <div class="status-chip">🧠 Model: ${data.model_mode||'local'}</div>
     `;
+    // 多用户（WebRTC）：每路在线会话一行，含实时 mic 电平
+    if (data.sessions && data.sessions.length) {
+      html += data.sessions.map(s =>
+        `<div class="status-chip">👤 ${escapeHtml(s.user_id)}:
+           ${s.peer_connected?'🟢':'🔴'} 🎤${s.mic?'✅':'❌'} 📷${s.camera?'✅':'❌'}
+           ${s.mic? s.mic_dbfs + 'dB' : ''}</div>`
+      ).join('');
+    }
+    ds.innerHTML = html;
     document.getElementById('tutorState').textContent = data.tutor_state || 'observing';
     document.getElementById('volumeSlider').value = data.volume || 70;
     document.getElementById('volumeVal').textContent = (data.volume||70) + '%';
@@ -628,6 +646,8 @@ async function loadDeviceStatus() {
     console.error('Failed to load device status:', e);
   }
 }
+// 设备/会话状态每 5s 轮询一次（原来只在页面打开时加载一次，永远不会变）
+setInterval(loadDeviceStatus, 5000);
 
 async function setRestMode() {
   await fetch('/api/device/rest', {method:'POST'});
@@ -794,8 +814,12 @@ async function saveVoiceGate() {
 }
 
 // ── Init ───────────────────────────────────────────────────────
-loadUsers();
-loadToday();
+// loadToday/loadWords 依赖 loadUsers 选出的默认用户，必须等它完成
+(async () => {
+  await loadUsers();
+  loadToday();
+  loadWords();
+})();
 loadDeviceStatus();
 loadTutors();
 loadChildAge();

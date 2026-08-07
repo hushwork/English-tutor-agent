@@ -4,7 +4,7 @@
 Verifies the multi-session RTCDeviceManager:
   1. Two concurrent peers (different users) stay connected — no kicking
   2. Audio isolation: user A's mic/TTS never lands in user B's session
-  3. Same-user reconnect replaces only that user's old session
+  3. Same-user reattach keeps the session and seams (only the peer is replaced)
   4. Peer close cleans up only that session; on_closed hook fires
   5. Invalid user_id rejected (path traversal guard)
 
@@ -86,15 +86,26 @@ async def main() -> None:
     assert len(sess_b.audio._spk_ring) == 0, "A's TTS leaked into B"
     print("✓ audio isolation between sessions")
 
-    # ── 3. Same-user reconnect replaces only that user's session ──
+    # ── 3. Same-user reattach: session/seams preserved, only peer replaced ──
+    # 网络抖动重连不应拆会话（PracticeSession 无感知），这是"断断续续"修复的核心
+    sess_a.audio._feed_mic(b"\x03\x00" * 100)  # 缓冲留数据，验证重挂后还在
     browser_a2, answer_a2 = await make_browser(manager, "alice")
-    assert answer_a2["session_id"] != answer_a["session_id"]
-    assert len(manager.sessions) == 2, "reconnect must not add a third session"
-    assert manager.get_session(answer_a["session_id"]) is None, "old alice lingers"
+    assert answer_a2["session_id"] == answer_a["session_id"], \
+        "reattach must keep session_id"
+    assert manager.get_session(answer_a["session_id"]) is sess_a, \
+        "session object must be preserved on reattach"
+    assert len(manager.sessions) == 2, "reattach must not add a third session"
     assert manager.get_session(answer_b["session_id"]) is sess_b, "bob disturbed"
     assert browser_b.connectionState == "connected"
-    assert closed and closed[0].user_id == "alice", "on_closed not fired for old alice"
-    print("✓ same-user reconnect replaces only that user")
+    assert not closed, "reattach must not fire on_closed"
+    # 新 browser 的音频流进同一个 seam（重挂后 mic 上行恢复）
+    deadline = time.time() + 5
+    mic_data = None
+    while mic_data is None and time.time() < deadline:
+        mic_data = sess_a.audio.read_mic()
+        await asyncio.sleep(0.05)
+    assert mic_data is not None, "mic uplink dead after reattach"
+    print("✓ same-user reattach preserves session, only peer replaced")
 
     # ── 4. Peer close cleans up only that session ──
     await browser_a2.close()

@@ -1,4 +1,4 @@
-"""Voice Gate — 统一语音门禁（独立模块，尚未接入管线）。
+"""Voice Gate — 统一语音门禁。
 
 把方案 A（文本拒识）和方案 B（KWS 唤醒词）收敛成一个门禁对象，
 配置文件 `.camera-tutor-data/voice_gate.json` 里用 `mode` 选择：
@@ -13,8 +13,9 @@ KWS 后端默认用 openWakeWord（需 `pip install openwakeword`，模型需自
 或按 docs/WAKEWORD_REJECTION_PLAN.md 方案 B 训练）。检测器通过构造参数
 注入，便于测试和替换后端。
 
-集成方式（后期在 local_pipe.py）：
-    gate = VoiceGate.load()
+集成方式（local_pipe.py）：全局 GATE 作配置模板并按 mtime 热重载；
+每个 WebSocket 连接用 `GATE.new_session()` 派生独立实例：
+    gate = GATE.new_session()
     # handler 收音频时：
     if gate.feed_audio(pcm_int16):   # kws 模式下未唤醒返回 False，直接丢弃
         buf.add(pcm_bytes)
@@ -148,6 +149,17 @@ class VoiceGate:
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
 
     # ── 音频侧（KWS 门） ──
+
+    def new_session(self) -> "VoiceGate":
+        """派生每连接独立的门禁实例（多用户并发用）。
+
+        共享配置与 KWS 检测器（底层模型只加载一份），但开门状态、
+        80ms 帧缓冲、文本指令表窗口各自独立——否则 A 用户的唤醒会给
+        B 用户开门，两路音频的帧还会交错进同一打分缓冲，互相污染。
+        """
+        if self.config.mode in (MODE_KWS, MODE_KWS_TEXT):
+            self._get_detector()   # 确保模型只在模板实例上加载一次
+        return VoiceGate(self.config, detector=self._detector)
 
     def _get_detector(self) -> KwsDetector:
         if self._detector is None:

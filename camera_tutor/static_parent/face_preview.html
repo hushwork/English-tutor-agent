@@ -158,6 +158,12 @@ async function startDevice() {
   document.getElementById('startOverlay').style.display = 'none';
   const statusEl = document.getElementById('status');
 
+  // 重连入口：先关掉上一路 peer，避免浏览器侧旧连接泄漏
+  if (window._rtcPC) {
+    try { window._rtcPC.close(); } catch (e) {}
+    window._rtcPC = null;
+  }
+
   // 音频处理开关从服务端读取（dashboard 可配）：
   // AGC 会放大噪音底破坏服务端 RMS VAD；noiseSuppression 会把小声语音当噪音吃掉；
   // AEC 保留以防外放场景回采
@@ -216,9 +222,14 @@ async function startDevice() {
   pc.onconnectionstatechange = () => {
     rtcOk = pc.connectionState === 'connected';
     renderConn();
-    if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+    if (pc.connectionState === 'failed') {
+      // failed = 连接真的死了，整体重连
       statusEl.textContent = '🔄 RTC 断开，重连中...';
       setTimeout(() => startDevice(), 2000);
+    } else if (pc.connectionState === 'disconnected') {
+      // disconnected 多为网络抖动的瞬态，ICE 大概率自行恢复——
+      // 不要急着拆连接重连（重连会中断正在进行的对话）
+      statusEl.textContent = '⏳ 网络抖动，等待恢复...';
     }
   };
 

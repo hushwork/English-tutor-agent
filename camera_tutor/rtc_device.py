@@ -154,11 +154,15 @@ class RTCAudioManager:
         self._mic_overflow = 0
 
         # Speaker: write_spk() → ring → out track recv()
+        # 容量按"整段回复"设计：TTS 合成速度（~14-28x 实时）远快于播放，
+        # 长篇回复（实测可达 110s+ 音频）会瞬间灌满——容量小了会静默丢
+        # 最旧的块，听感就是"快进、只出几个声音"。1500 条 ≈ 150s ≈ 7MB。
         self._spk_ring: deque[tuple[bytes, list[dict] | None]] = deque()
-        self._spk_ring_maxlen = 200
+        self._spk_ring_maxlen = 1500
         self._spk_lock = threading.Lock()
         self._spk_underflow = 0
         self._spk_dropped_no_peer = 0
+        self._spk_overflow_dropped = 0
 
         # Viseme outbox: (due_epoch, payload) — drained by a thread
         self._viseme_outbox: deque[tuple[float, dict]] = deque()
@@ -339,6 +343,10 @@ class RTCAudioManager:
         with self._spk_lock:
             if len(self._spk_ring) >= self._spk_ring_maxlen:
                 self._spk_ring.popleft()
+                self._spk_overflow_dropped += 1
+                if self._spk_overflow_dropped == 1:
+                    logger.warning("RTC spk ring full — dropping oldest audio "
+                                   "(回复太长，考虑精简人设话术)")
             self._spk_ring.append((data, visemes))
 
     def _pop_spk(self, needed: int) -> tuple[bytes, list[dict]]:

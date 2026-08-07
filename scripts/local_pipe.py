@@ -123,11 +123,18 @@ def get_whisper():
 _stt_lock = threading.Lock()
 
 # STT 拒答/解释性元话语过滤：gemma 是 chat 模型，听到非英语/噪音时爱输出
-# "I'm sorry, I cannot transcribe..." 之类解释而不是空——这类文本绝不能进对话
+# "I'm sorry, I cannot transcribe..." 之类解释而不是空——这类文本绝不能进对话。
+# 第二类：思考通道/推理过程泄漏（"The user wants me to transcribe the provided
+# audio... I should output nothing"），措辞多变，按"转写相关元话语"特征匹配。
 _STT_META_RE = re.compile(
-    r"cannot transcribe|can'?t transcribe|unable to transcribe|not in english|"
-    r"no (clear )?(english )?speech|i'?m sorry|i apologize|"
-    r"only (noise|silence)|does not contain|no audible",
+    r"cannot transcribe|can'?t transcribe|unable to transcribe|"
+    r"transcribe (the|this|provided|given)|verbatim transcription|"
+    r"the user wants me to|i should output|output nothing|"
+    r"not in english|no (clear )?(english )?speech|not clear (english )?speech|"
+    r"i'?m sorry|i apologize|"
+    r"only (noise|silence)|does not contain|no audible|"
+    r"appears to be (a )?(noise|sound)|sound effect|"
+    r"<\||\|>|channelthought",
     re.IGNORECASE)
 
 def _is_stt_meta(text: str) -> bool:
@@ -212,8 +219,9 @@ except Exception as e:
 log.info("模型就绪")
 
 def clean_text(text):
-    # 剥掉泄漏的特殊 token：<end_of_turn>、</startofturn、<start_of_turn> 等
+    # 剥掉泄漏的特殊 token：<end_of_turn>、</startofturn、<|channelthought 等
     text = re.sub(r'<\s*/?\s*(start|end)_?of_?turn[^>]*>?', ' ', text, flags=re.IGNORECASE)
+    text = re.sub(r'<\|[^>]*>?', ' ', text)
     # 剥掉舞台指令/状态描述：(smiles)、(laughing)、（微笑）等，TTS 不应念出来
     text = re.sub(r'\([^)]*\)', ' ', text)
     text = re.sub(r'（[^）]*）', ' ', text)

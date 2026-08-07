@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Emma — Live2D</title>
+<title>English Tutor — Live2D</title>
 <style>
   body { margin:0; background:#0f1117; overflow:hidden; }
   canvas { display:block; }
@@ -11,28 +11,52 @@
   .dot { width:8px; height:8px; border-radius:50%; display:inline-block; margin-right:6px; }
   .dot.on { background:#4ecf8d; }
   .dot.off { background:#ff5c6c; }
-  #camera { position:fixed; top:12px; right:12px; width:160px; border-radius:8px; border:2px solid #2a2d3a; opacity:0.85; z-index:100; display:none; }
-  #startOverlay { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(15,17,23,.85); z-index:200; }
+  /* 左上角导师信息；z-index 高于 startOverlay(200)，开始对话前也可点 */
+  #tutorBadge { position:fixed; top:12px; left:12px; z-index:300; display:flex; align-items:center; gap:8px;
+    background:rgba(20,23,32,.72); border:1px solid #2a2d3a; border-radius:999px; padding:6px 14px;
+    color:#e6e8f0; font:14px sans-serif; backdrop-filter:blur(4px); }
+  #tutorBadge .emoji { font-size:20px; }
+  #tutorBadge .name { font-weight:600; }
+  /* 字幕独立成一层：宽度固定居中，不随文本长度把整行顶来顶去 */
+  #subtitle { position:fixed; bottom:48px; left:50%; transform:translateX(-50%); width:min(80vw,720px);
+    text-align:center; color:#f2f3f7; font:16px/1.5 sans-serif; text-shadow:0 1px 4px rgba(0,0,0,.6);
+    min-height:24px; z-index:100; pointer-events:none; transition:opacity .2s; }
+  #settingsBtn { position:fixed; top:12px; right:12px; z-index:300; width:36px; height:36px; border-radius:50%;
+    border:1px solid #2a2d3a; background:rgba(20,23,32,.72); color:#e6e8f0; font-size:17px; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; backdrop-filter:blur(4px); text-decoration:none; }
+  #settingsBtn:hover { background:rgba(40,44,58,.85); }
+  #camera { position:fixed; top:56px; right:12px; width:160px; border-radius:8px; border:2px solid #2a2d3a; opacity:0.85; z-index:100; display:none; }
+  #startOverlay { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(15,17,23,.85); z-index:200; flex-direction:column; gap:12px; }
   #startOverlay button { font:16px sans-serif; padding:14px 32px; border-radius:10px; border:none; background:#4ecf8d; color:#0f1117; cursor:pointer; }
+  #startOverlay button.secondary { background:transparent; border:1px solid #4ecf8d; color:#4ecf8d; }
 
   /* 移动端适配 */
   @media (max-width: 600px) {
     #info { bottom:8px; max-width:94vw; font-size:12px; gap:8px; flex-wrap:wrap; justify-content:center; }
     #status { max-width:60vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    #localCam, #camera { width:26vw !important; max-width:120px; top:8px; right:8px; }
+    #subtitle { font-size:14px; bottom:44px; width:92vw; }
+    #tutorBadge { top:8px; left:8px; padding:4px 10px; font-size:12px; }
+    #tutorBadge .emoji { font-size:16px; }
+    #localCam, #camera { width:26vw !important; max-width:120px; top:48px; right:8px; }
+    #settingsBtn { top:8px; right:8px; width:32px; height:32px; font-size:15px; }
     #startOverlay button { font-size:18px; padding:18px 44px; }
   }
 </style>
 </head>
 <body>
+<div id="tutorBadge"><span class="emoji" id="tutorEmoji">👩‍🏫</span><span class="name" id="tutorName">…</span></div>
+<a id="settingsBtn" href="/" title="设置 / Dashboard">⚙️</a>
 <img id="camera">
 <video id="localCam" autoplay muted playsinline
-       style="position:fixed;top:12px;right:12px;width:160px;border-radius:8px;border:2px solid #2a2d3a;opacity:0.85;z-index:100;display:none;"></video>
+       style="position:fixed;top:56px;right:12px;width:160px;border-radius:8px;border:2px solid #2a2d3a;opacity:0.85;z-index:100;display:none;"></video>
 <audio id="remoteAudio" autoplay></audio>
-<div id="startOverlay"><button id="startBtn">🎤 点击开始对话</button></div>
+<div id="startOverlay">
+  <button id="startBtn">🎤 点击开始对话</button>
+  <button id="previewBtn" class="secondary" style="display:none">👀 仅预览（无需麦克风/摄像头）</button>
+</div>
+<div id="subtitle"></div>
 <div id="info">
-  <span class="dot off" id="wssDot"></span>
-  <span class="dot off" id="rtcDot" style="display:none"></span>
+  <span class="dot off" id="connDot"></span>
   <span id="status">Loading...</span>
   <span>👄<span id="mouthVal">0</span></span>
 </div>
@@ -40,18 +64,64 @@
 <script src="live2d/core/live2dcubismcore.min.js"></script>
 <script type="module" src="live2d/bundle.js"></script>
 <script>
+// Live2D SDK 的已知无害报错：页面离开/从 bfcache 恢复时，渲染循环的
+// 残留帧回调会访问已释放的实例（_subdelegates is null）。发生在卸载
+// 瞬间，不影响功能。源码已在 live2d-src/lappdelegate.ts 修复，
+// bundle.js 下次重建后此屏蔽可移除。
+window.addEventListener('error', (e) => {
+  if (e.filename && e.filename.includes('live2d/bundle.js') &&
+      e.message && e.message.includes('_subdelegates')) {
+    e.preventDefault();
+  }
+});
+
 const DEVICE_MODE = new URLSearchParams(location.search).get('device') === '1';
 const RTC_TOKEN = new URLSearchParams(location.search).get('token') || '';
+
+// ── 当前导师：标题 + 左上角徽章（轮询以感知热切换） ──
+let currentTutor = null;
+async function refreshTutor() {
+  try {
+    const r = await fetch('/api/tutor/active');
+    if (!r.ok) return;
+    const t = await r.json();
+    if (currentTutor && currentTutor.id === t.id) return;
+    currentTutor = t;
+    document.title = t.name + ' — English Tutor';
+    document.getElementById('tutorEmoji').textContent = t.emoji;
+    const nameEl = document.getElementById('tutorName');
+    nameEl.textContent = t.name;
+    document.getElementById('tutorBadge').title = t.description_cn || '';
+  } catch (e) { /* 网络抖动时下轮再试 */ }
+}
+refreshTutor();
+setInterval(refreshTutor, 5000);
+
+// ── 连接状态：合并为一个指示灯（设备模式需 WS + RTC 都连通） ──
+let wsOk = false;
+let rtcOk = !DEVICE_MODE;
+function renderConn() {
+  const ok = wsOk && rtcOk;
+  document.getElementById('connDot').className = 'dot ' + (ok ? 'on' : 'off');
+}
 
 (function connectWS() {
   const p = location.protocol === 'https:' ? 'wss://' : 'ws://';
   const ws = new WebSocket(p + location.host + '/ws/emma/face');
-  ws.onopen = () => { document.getElementById('wssDot').className = 'dot on'; };
+  ws.onopen = () => {
+    wsOk = true; renderConn();
+    document.getElementById('status').textContent = '🟢 Live';
+  };
   ws.onmessage = (ev) => {
     const d = JSON.parse(ev.data);
     if (d.mouth_open !== undefined) {
       window._setMouthOpen?.(d.mouth_open, d.viseme);
-      document.getElementById('status').textContent = d.transcript ? '💬 '+d.transcript : '🟢 Live';
+      // 只在新字幕到达时更新；无字幕时保留上一条，避免闪烁
+      if (d.transcript) {
+        const s = document.getElementById('subtitle');
+        s.textContent = d.transcript;
+        s.style.opacity = 1;
+      }
       document.getElementById('mouthVal').textContent = d.mouth_open.toFixed(2);
     }
     // Device mode shows its own local camera; skip the relayed JPEG.
@@ -61,33 +131,53 @@ const RTC_TOKEN = new URLSearchParams(location.search).get('token') || '';
       cam.style.display = 'block';
     }
   };
-  ws.onclose = () => { document.getElementById('wssDot').className = 'dot off'; setTimeout(connectWS, 2000); };
+  ws.onclose = () => { wsOk = false; renderConn(); setTimeout(connectWS, 2000); };
   ws.onerror = () => ws.close();
 })();
 
 // ── Device mode: this browser IS the mic/camera/speaker (WebRTC) ──
 async function startDevice() {
   document.getElementById('startOverlay').style.display = 'none';
-  const rtcDot = document.getElementById('rtcDot');
   const statusEl = document.getElementById('status');
 
+  // 音频处理开关从服务端读取（dashboard 可配）：
+  // AGC 会放大噪音底破坏服务端 RMS VAD；noiseSuppression 会把小声语音当噪音吃掉；
+  // AEC 保留以防外放场景回采
+  let audioProc = { echoCancellation: true, noiseSuppression: false, autoGainControl: false };
+  try {
+    const r = await fetch('/api/device/audio-settings');
+    if (r.ok) audioProc = { ...audioProc, ...(await r.json()) };
+  } catch (e) { /* 拉取失败用默认 */ }
+  const audioConstraints = { ...audioProc, channelCount: 1 };
   let stream;
+  let hasCamera = true;
   try {
     stream = await navigator.mediaDevices.getUserMedia({
-      // 尽量拿原始音频：AGC 会放大噪音底破坏服务端 RMS VAD；
-      // noiseSuppression 会把小声语音当噪音吃掉；AEC 保留以防外放场景回采
-      audio: { echoCancellation: true, noiseSuppression: false, channelCount: 1,
-               autoGainControl: false },
+      audio: audioConstraints,
       video: { width: 1280, height: 720 },
     });
   } catch (e) {
-    statusEl.textContent = '⚠️ 无法访问麦克风/摄像头: ' + e.message;
-    document.getElementById('startOverlay').style.display = 'flex';
-    return;
+    // 摄像头拿不到就降级为纯语音——对话只需要麦克风；
+    // 连麦克风也没有时才退回仅预览
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: audioConstraints, video: false,
+      });
+      hasCamera = false;
+      statusEl.textContent = '🎤 纯语音模式（未检测到摄像头）';
+    } catch (e2) {
+      statusEl.textContent = '⚠️ 无法访问麦克风/摄像头: ' + e2.message;
+      // 无硬件设备给个出口：可进仅预览模式看 Live2D 和字幕
+      document.getElementById('previewBtn').style.display = 'block';
+      document.getElementById('startOverlay').style.display = 'flex';
+      return;
+    }
   }
-  const localCam = document.getElementById('localCam');
-  localCam.srcObject = stream;
-  localCam.style.display = 'block';
+  if (hasCamera) {
+    const localCam = document.getElementById('localCam');
+    localCam.srcObject = stream;
+    localCam.style.display = 'block';
+  }
 
   // LAN 下服务端未配 TURN 时返回空 iceServers，等价于之前的无参构造；
   // 公网/CGNAT 下（手机蜂窝）必须靠这里拿到 STUN/TURN 才能打通
@@ -106,19 +196,24 @@ async function startDevice() {
     }
   };
   pc.onconnectionstatechange = () => {
-    const ok = pc.connectionState === 'connected';
-    rtcDot.className = 'dot ' + (ok ? 'on' : 'off');
+    rtcOk = pc.connectionState === 'connected';
+    renderConn();
     if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
       statusEl.textContent = '🔄 RTC 断开，重连中...';
       setTimeout(() => startDevice(), 2000);
     }
   };
 
+  statusEl.textContent = '🔌 连接中...';
   await pc.setLocalDescription(await pc.createOffer());
-  await new Promise(res => {   // server does not trickle — gather first
+  // server does not trickle — gather first. 但必须有超时兜底：
+  // 配了 TURN 而中继不可达/过慢时，gathering 可能永远不 complete，
+  // 表现为"点击开始没反应"。LAN 下 host candidate 已够用，先到先发。
+  await new Promise(res => {
     if (pc.iceGatheringState === 'complete') return res();
+    const t = setTimeout(res, 4000);
     pc.addEventListener('icegatheringstatechange', () => {
-      if (pc.iceGatheringState === 'complete') res();
+      if (pc.iceGatheringState === 'complete') { clearTimeout(t); res(); }
     });
   });
 
@@ -139,10 +234,13 @@ async function startDevice() {
 }
 
 if (DEVICE_MODE) {
-  document.getElementById('rtcDot').style.display = 'inline-block';
   document.getElementById('startOverlay').style.display = 'flex';
   document.getElementById('status').textContent = '设备模式';
   document.getElementById('startBtn').onclick = startDevice;
+  document.getElementById('previewBtn').onclick = () => {
+    document.getElementById('startOverlay').style.display = 'none';
+    document.getElementById('status').textContent = '👀 仅预览模式';
+  };
 }
 </script>
 </body>

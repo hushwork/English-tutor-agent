@@ -94,8 +94,12 @@ export class LAppDelegate {
   public run(): void {
     // メインループ
     const loop = (): void => {
-      // インスタンスの有無の確認
-      if (s_instance == null) {
+      // インスタンスの有無の確認。
+      // _subdelegates の null チェックも必要：ページ遷移時の beforeunload で
+      // release() されると _subdelegates は null になるが、既にキューに
+      // 入っている（または bfcache 復帰後に新インスタンスが作られた場合の）
+      // 旧 loop コールバックが実行されると TypeError になる
+      if (s_instance == null || !this._subdelegates) {
         return;
       }
 

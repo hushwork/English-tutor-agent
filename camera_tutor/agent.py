@@ -400,23 +400,24 @@ class CameraTutorAgent:
 
         # Configure session（本地 s2s 只需基础字段：voice/speed/transcription/silence 会报错）
         audio_output = {"voice": self.tutor.voice}
+        session = {
+            "type": "realtime",
+            "modalities": ["text", "audio"],
+            "instructions": self._build_instructions(),
+            "audio": {"output": audio_output},
+            "input_audio_format": "pcm",
+            "output_audio_format": "pcm",
+            "turn_detection": {
+                "type": "server_vad",
+                "threshold": self.config.server_vad_threshold,
+            },
+        }
         if os.environ.get("OMNI_WS_URL", ""):
-            # 本地 local_pipe：按角色传递语速（云端 Omni 不认此字段，不发）
+            # 本地 local_pipe 专有字段（云端 Omni 不认，不发）：按角色传语速
             audio_output["speed"] = getattr(self.tutor, "speed", 1.0)
         ws.send(json.dumps({
             "type": "session.update",
-            "session": {
-                "type": "realtime",
-                "modalities": ["text", "audio"],
-                "instructions": self._build_instructions(),
-                "audio": {"output": audio_output},
-                "input_audio_format": "pcm",
-                "output_audio_format": "pcm",
-                "turn_detection": {
-                    "type": "server_vad",
-                    "threshold": self.config.server_vad_threshold,
-                },
-            },
+            "session": session,
         }))
 
         # Reset session events
@@ -702,6 +703,7 @@ class CameraTutorAgent:
 
     def _update_session_instructions(self) -> None:
         """Send updated instructions to the model so it knows what it recently said."""
+        self._maybe_switch_tutor()
         if self.connection is None or self.connection.ws is None:
             return
         try:
@@ -712,33 +714,49 @@ class CameraTutorAgent:
         except Exception as e:
             logger.debug("Session update error: %s", e)
 
+    def _maybe_switch_tutor(self) -> None:
+        """Hot-swap the tutor persona when the dashboard selection changes.
+
+        tutor_prefs.json 是唯一事实来源（dashboard 切换导师时写它）。
+        每轮对话后检查一次：新人设的指令下一轮即生效；本地管道
+        （local_pipe）同时热切换音色/语速，云端 Omni 不支持会话中
+        换音色，重连后生效。无需重启 agent。
+        """
+        try:
+            current = get_active_tutor()
+        except Exception:
+            return
+        if current.id == self.tutor.id:
+            return
+        logger.info("Tutor switched: %s → %s", self.tutor.name, current.name)
+        self.tutor = current
+        if not (self.connection and self.connection.ws):
+            return
+        if os.environ.get("OMNI_WS_URL", ""):
+            # 本地 local_pipe 专有：会话中直接换音色/语速
+            try:
+                self.connection.ws.send(json.dumps({
+                    "type": "session.update",
+                    "session": {"audio": {"output": {
+                        "voice": current.voice,
+                        "speed": getattr(current, "speed", 1.0),
+                    }}},
+                }))
+            except Exception as e:
+                logger.debug("Tutor voice switch error: %s", e)
+
     def _build_instructions(self) -> str:
         """Build a rich system prompt with child profile and vocabulary."""
+        if getattr(self.tutor, "audience", "child") == "adult":
+            return self._build_adult_instructions()
         child_age = self._get_child_age()
-        max_words = {3: 5, 5: 8, 7: 10, 9: 12, 12: 15}
-        closest = min(max_words.keys(), key=lambda k: abs(k - child_age))
-        w = max_words[closest]
 
-        known_vocab = self._get_known_vocab()
         common_errors = self._get_common_errors()
-        due_words = self._get_due_words()
         session_info = self._get_session_info()
 
-        vocab_line = ""
-        if known_vocab:
-            vocab_line = (
-                f"\nCHILD'S KNOWN VOCABULARY ({len(known_vocab)} words):\n"
-                f"{', '.join(known_vocab)}\n"
-            )
         errors_line = ""
         if common_errors:
             errors_line = f"\nCHILD'S COMMON ERRORS:\n{common_errors}\n"
-        due_line = ""
-        if due_words:
-            due_line = (
-                f"\nWORDS TO PRACTICE TODAY:\n"
-                f"Try to naturally use these words: {', '.join(due_words)}\n"
-            )
 
         # Recent phrases (use memory for full history, cap at 8 for prompt)
         recent_phrases = []
@@ -776,15 +794,6 @@ class CameraTutorAgent:
             )
             for i, p in enumerate(recent_phrases, 1):
                 recent_line += f"  {i}. \"{p}\"\n"
-            # Also check frequently-used words
-            if self.memory:
-                vocab = self.memory.get_vocabulary()
-                if len(vocab) > 10:
-                    top_words = [v["word"] for v in vocab[-5:]]
-                    recent_line += (
-                        f"\nWords you use a lot (try DIFFERENT ones): "
-                        f"{', '.join(top_words)}\n"
-                    )
 
         return (
             f"You are {self.tutor.name}, a {self.tutor.teaching_style} English tutor "
@@ -796,9 +805,9 @@ class CameraTutorAgent:
             f"VISION: You receive real-time camera images — use what you SEE.\n\n"
             f"YOUR MISSION: Be a friendly companion who happens to speak English.\n"
             f"Follow the child's lead. Chat, play, wonder — don't teach or quiz.\n\n"
-            f"{session_info}{vocab_line}{errors_line}{due_line}{repeated_warning}{recent_line}"
+            f"{session_info}{errors_line}{repeated_warning}{recent_line}"
             f"YOUR STYLE:\n"
-            f"1. Short and natural — 1-2 sentences, like talking to a friend.\n"
+            f"1. Short and natural, like talking to a friend.\n"
             f"2. Switch it up: sometimes playful 🎨, sometimes curious 🔍,\n"
             f"   sometimes a storyteller 📖, sometimes quietly present 🤫.\n"
             f"3. Wonder out loud: 'I wonder what that does...' 'That looks fun!'\n"
@@ -809,15 +818,44 @@ class CameraTutorAgent:
             f"8. Sound like a friend — never like a textbook or a quiz.\n"
         )
 
+    def _build_adult_instructions(self) -> str:
+        """Lean system prompt for adult-facing personas (e.g. interview coach).
+
+        成人不需要儿童那套约束（句长上限、词汇表、夸奖规则），
+        prompt 保持精简，小模型的指令遵循更可靠。
+        """
+        # 复用防复读机制：把最近说过的话列出来，避免重复提问
+        recent_line = ""
+        if self.memory:
+            ctx = self.memory.get_context(max_messages=24)
+            recent = [
+                m["content"][:80]
+                for m in ctx[-12:] if m.get("role") == "assistant"
+            ][-6:]
+            if recent:
+                recent_line = "\nYOU ALREADY ASKED/SAID THESE (don't repeat):\n"
+                for i, p in enumerate(recent, 1):
+                    recent_line += f"  {i}. \"{p}\"\n"
+
+        return (
+            f"You are {self.tutor.name}, a {self.tutor.teaching_style} "
+            f"English interview coach for adults.\n"
+            f"Personality: {', '.join(self.tutor.personality_traits[:3])}.\n\n"
+            f"{self.tutor._tutor_rules()}\n\n"
+            f"IMPORTANT: The user speaks ENGLISH. Transcribe as English.\n"
+            f"{recent_line}\n"
+            f"YOUR STYLE:\n"
+            f"1. Speak naturally — as long as the point needs, no filler.\n"
+            f"2. One question at a time; let the user finish before feedback.\n"
+            f"3. Balance encouragement with specific, actionable corrections.\n"
+            f"4. NEVER repeat the same question twice in a session.\n"
+            f"5. This is a LIVE VOICE conversation — no stage directions, "
+            f"no parenthesized actions. Just talk.\n"
+        )
+
     def _get_child_age(self) -> int:
         from camera_tutor.tutor_personas import get_child_age as _get_age
         return _get_age()
-
-    def _get_known_vocab(self) -> list[str]:
-        if not self.memory:
-            return []
-        vocab = self.memory.get_vocabulary()
-        return [v["word"] for v in vocab[-20:]] if vocab else []
 
     def _get_common_errors(self) -> str:
         if not self.memory:
@@ -831,14 +869,6 @@ class CameraTutorAgent:
             ex_str = f' (e.g. "{ex[-1]}")' if ex else ""
             parts.append(f"- {err_type}: {info['count']}x{ex_str}")
         return "\n".join(parts)
-
-    def _get_due_words(self) -> list[str]:
-        if not self.sr:
-            return []
-        try:
-            return [c.word for c in self.sr.get_due_cards(limit=5)]
-        except Exception:
-            return []
 
     def _get_session_info(self) -> str:
         if not self.memory:

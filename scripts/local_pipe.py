@@ -36,6 +36,7 @@ KOKORO_VOICE_MAP = {
     "momo": "af_sky",       # Bella — 活泼搞怪
     "tina": "af_bella",     # Sophie — 甜甜暖暖
     "mione": "af_nicole",   # Olivia — 知性（本地无英伦音，取近似）
+    "jennifer": "af_jessica",  # Grace — 面试教练（专业知性）
 }
 
 def map_voice(name):
@@ -49,9 +50,10 @@ def map_voice(name):
     return name if "_" in name else DEFAULT_VOICE
 
 # 图像累积：最近几帧原图 + 场景文本历史（模拟 Qwen-Omni 的会话内图像累积）
-FRAME_BUF_SIZE = 8          # 最近 N 个关键帧随语音请求一起发（旧→新）
-SCENE_HISTORY_SIZE = 8      # 场景文本摘要条数上限
+FRAME_BUF_SIZE = 2          # 最近 N 个关键帧随语音请求一起发（旧→新）；多帧极占上下文，2 帧够用
+SCENE_HISTORY_SIZE = 4      # 场景文本摘要条数上限
 SCENE_PROBE_INTERVAL = 15.0 # 场景摘要探测间隔（秒）
+HISTORY_TURNS = 4           # 随请求携带的最近对话轮数（1 轮 = user + assistant 各一条）
 
 frame_buffer: deque[str] = deque(maxlen=FRAME_BUF_SIZE)
 scene_history: deque[str] = deque(maxlen=SCENE_HISTORY_SIZE)
@@ -194,6 +196,8 @@ async def handler(ws):
     instructions = ""
     voice = DEFAULT_VOICE
     speed = 0.9   # TTS 语速，可被 session.update 按角色覆盖
+    # 对话历史（纯文本）：没有它模型每轮都是"失忆"状态，答非所问、反复重开话题
+    history: deque = deque(maxlen=HISTORY_TURNS * 2)
 
     try:
         async for raw in ws:
@@ -231,17 +235,18 @@ async def handler(ws):
             elif t == "input_audio_buffer.append":
                 pcm = base64.b64decode(msg.get("audio", ""))
                 if buf.add(pcm):
-                    await process(ws, buf, instructions, voice, speed)
+                    await process(ws, buf, instructions, voice, speed, history)
 
             elif t == "input_audio_buffer.commit":
-                await process(ws, buf, instructions, voice, speed)
+                await process(ws, buf, instructions, voice, speed, history)
 
             elif t == "response.cancel":
                 pass
     except websockets.ConnectionClosed:
         pass
 
-async def process(ws, buf, instructions, voice=DEFAULT_VOICE, speed=0.9):
+async def process(ws, buf, instructions, voice=DEFAULT_VOICE, speed=0.9,
+                  history=None):
     pcm, speech = buf.get_and_clear()
     # 双保险：整段至少 0.3s，且其中"超过阈值"的音频至少 0.4s——
     # 单个噪音尖峰（风扇/电流声）凑不够 0.4s，直接丢弃，避免 whisper 对着纯噪音幻觉出句子
@@ -265,6 +270,10 @@ async def process(ws, buf, instructions, voice=DEFAULT_VOICE, speed=0.9):
 
     # user content：最近 N 帧原图（旧→新）+ 文本
     images = list(frame_buffer)
+    # messages：system + 最近几轮对话历史（纯文本，不带图）+ 当前输入
+    msgs = [{"role": "system", "content": sys_prompt}]
+    if history:
+        msgs.extend(history)
     async with httpx.AsyncClient(timeout=60) as cli:
         if images:
             content = [
@@ -274,20 +283,16 @@ async def process(ws, buf, instructions, voice=DEFAULT_VOICE, speed=0.9):
             content.append({"type": "text", "text": (
                 f"These are the last {len(images)} camera frames (oldest to newest). "
                 f"The child said: {text}. Respond naturally.")})
+            msgs.append({"role": "user", "content": content})
             payload = {
                 "model": "gemma4",
-                "messages": [
-                    {"role": "system", "content": sys_prompt},
-                    {"role": "user", "content": content},
-                ], "max_tokens": 40,
+                "messages": msgs,
             }
         else:
+            msgs.append({"role": "user", "content": text})
             payload = {
                 "model": "gemma4",
-                "messages": [
-                    {"role": "system", "content": sys_prompt},
-                    {"role": "user", "content": text},
-                ], "max_tokens": 40,
+                "messages": msgs,
             }
         log.info(f"LLM request: images={len(images)} history={len(scene_history)} text={text[:30]}")
         resp = await cli.post(LLM, json=payload)
@@ -305,6 +310,11 @@ async def process(ws, buf, instructions, voice=DEFAULT_VOICE, speed=0.9):
         # 整段回复都是舞台指令，剥完为空——跳过本次播报
         await ws.send(json.dumps({"type": "response.audio.done", "response_id": "none"}))
         return
+
+    # 记入对话历史（只存文本，图像不重发），供后续轮次引用
+    if history is not None:
+        history.append({"role": "user", "content": text})
+        history.append({"role": "assistant", "content": reply})
 
     await ws.send(json.dumps({"type": "response.audio_transcript.delta", "delta": reply}))
     await ws.send(json.dumps({"type": "response.audio_transcript.done", "transcript": reply}))

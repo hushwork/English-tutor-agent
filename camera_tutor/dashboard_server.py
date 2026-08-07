@@ -72,6 +72,36 @@ _device_state = {
     "uptime_seconds": 0,
 }
 
+# ── Mic capture processing toggles (WebRTC getUserMedia constraints) ──
+# 默认值与 local_pipe 的 RMS VAD 调参一致：
+# AEC 开（外放防回采）、NS 关（会吃掉小声语音）、AGC 关（放大噪音底破坏 VAD）
+AUDIO_SETTINGS_DEFAULTS = {
+    "echoCancellation": True,
+    "noiseSuppression": False,
+    "autoGainControl": False,
+}
+
+
+def _audio_settings_path() -> Path:
+    return data_dir() / "audio_settings.json"
+
+
+def _load_audio_settings() -> dict:
+    path = _audio_settings_path()
+    if path.exists():
+        try:
+            data = json.loads(path.read_text())
+            return {k: bool(data.get(k, v)) for k, v in AUDIO_SETTINGS_DEFAULTS.items()}
+        except (json.JSONDecodeError, OSError):
+            pass
+    return dict(AUDIO_SETTINGS_DEFAULTS)
+
+
+def _save_audio_settings(settings: dict) -> None:
+    path = _audio_settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(settings, indent=2))
+
 
 # ── Static files ────────────────────────────────────────────────
 
@@ -240,6 +270,30 @@ async def get_highlights(limit: int = 5):
 
 
 # ── Tutor Persona API ─────────────────────────────────────────
+
+@app.get("/api/device/audio-settings")
+async def get_audio_settings():
+    """Get mic capture processing toggles (consumed by the WebRTC device page)."""
+    return _load_audio_settings()
+
+
+@app.post("/api/device/audio-settings")
+async def update_audio_settings(
+    echoCancellation: Optional[bool] = Query(None),
+    noiseSuppression: Optional[bool] = Query(None),
+    autoGainControl: Optional[bool] = Query(None),
+):
+    """Update mic capture processing toggles (applied on next device capture)."""
+    settings = _load_audio_settings()
+    for key, val in {
+        "echoCancellation": echoCancellation,
+        "noiseSuppression": noiseSuppression,
+        "autoGainControl": autoGainControl,
+    }.items():
+        if val is not None:
+            settings[key] = val
+    _save_audio_settings(settings)
+    return {"success": True, "settings": settings}
 
 @app.get("/api/tutor/list")
 async def api_list_tutors():

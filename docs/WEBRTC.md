@@ -102,6 +102,26 @@ RTC_TOKEN=some-secret
 页面行为：请求麦克风+摄像头权限 → 本地回显画面 → 建立连接；
 断开（failed/disconnected）后 2 秒自动重连。
 
+硬件降级链（2026-08-07）：音视频 → **纯语音**（无摄像头时自动降级，对话不受影响）→
+**仅预览**（连麦克风都没有时提供入口，可看 Live2D/字幕，不建 RTC）。
+
+ICE 等待有 4 秒超时兜底：服务端不做 trickle，浏览器端等 gathering complete
+才发 offer，但配了 TURN 而中继不可达/过慢时 gathering 可能永远不结束
+（表现为"点击开始没反应"）；超时后拿已有候选直接发 offer——LAN 下 host
+candidate 本就够用。
+
+### 麦克风采集开关
+
+dashboard → Device 标签页 →「🎤 Mic Capture (WebRTC)」可切换三项
+getUserMedia 音频处理（`GET/POST /api/device/audio-settings`，持久化在
+`.camera-tutor-data/audio_settings.json`，设备端下次采集时生效）：
+
+| 开关 | 默认 | 说明 |
+|------|------|------|
+| `echoCancellation` (AEC) | 开 | 外放场景防回采 |
+| `noiseSuppression` | 关 | 会把小声语音当噪音吃掉 |
+| `autoGainControl` (AGC) | 关 | 放大噪音底，破坏服务端 RMS VAD |
+
 ### 配置项汇总
 
 | 变量 | 默认 | 说明 |
@@ -181,6 +201,19 @@ RTC_TOKEN=some-secret
       `tests/test_rtc_browser.py`：真实 Chrome + 真实页面全链路通过）；
       物理手机手动验证已通过（2026-08-06，蜂窝网络 + TURN 中转全链路）
 - [ ] 前端设备页与 Live2D 预览同页，尚不能独立作为"纯设备"轻量页面
+
+### 已修复问题记录（2026-08-07 设备页交互）
+
+- **点击"开始对话"无反应**：ICE gathering 等待无超时，TURN 中继分配慢/不可达时
+  永久卡在 gathering、offer 发不出去。修复：4 秒超时兜底 + 点击即显示"连接中"。
+- **无硬件设备被遮罩困死**：getUserMedia 失败后只有重试一条路。修复：硬件降级链
+  （音视频 → 纯语音 → 仅预览）。
+- **开始前无法进设置**：全屏遮罩盖住设置入口。修复：导师徽章/设置按钮 z-index
+  提到遮罩之上，开始对话前即可进 dashboard 换导师、调采集开关。
+- **Live2D `_subdelegates is null`**：页面卸载瞬间渲染循环残留帧回调访问已释放
+  实例（SDK 示例代码竞态，无害但刷红错）。修复：`live2d-src/lappdelegate.ts`
+  源码加防御（下次 `npm run build` 生效）；bundle 重建前由 `face_preview.html`
+  应用层精准屏蔽该报错。
 
 ### 已修复问题记录（2026-08-06 公网部署）
 

@@ -360,9 +360,6 @@
 
   <!-- Device Tab -->
   <div class="tab-content" id="tab-device">
-
-  <!-- Device Tab -->
-  <div class="tab-content" id="tab-device">
     <div class="section">
       <h3>🔌 Device Status</h3>
       <div class="device-status" id="deviceStatus">
@@ -388,6 +385,26 @@
       <div class="settings-row">
         <span class="label">Tutor State</span>
         <span class="value" id="tutorState">observing</span>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>🎤 Mic Capture (WebRTC)</h3>
+      <div class="settings-row">
+        <span class="label">Echo cancellation (AEC)</span>
+        <input type="checkbox" id="aecToggle">
+      </div>
+      <div class="settings-row">
+        <span class="label">Noise suppression</span>
+        <input type="checkbox" id="nsToggle">
+      </div>
+      <div class="settings-row">
+        <span class="label">Auto gain control (AGC)</span>
+        <input type="checkbox" id="agcToggle">
+      </div>
+      <div style="font-size:11px;color:var(--text2);padding-top:8px">
+        仅对设备模式（face_preview?device=1）的麦克风采集生效，设备重连后应用。<br>
+        本地 VAD 调参建议：AEC 开、降噪关、AGC 关。
       </div>
     </div>
 
@@ -616,11 +633,31 @@ async function loadChildAge() {
   } catch(e) {}
 }
 
+// ── Mic capture toggles (WebRTC audio processing) ──────────────
+async function loadAudioSettings() {
+  try {
+    const resp = await fetch('/api/device/audio-settings');
+    const s = await resp.json();
+    document.getElementById('aecToggle').checked = !!s.echoCancellation;
+    document.getElementById('nsToggle').checked = !!s.noiseSuppression;
+    document.getElementById('agcToggle').checked = !!s.autoGainControl;
+  } catch(e) { console.error('Failed to load audio settings:', e); }
+}
+function bindAudioToggle(id, key) {
+  document.getElementById(id).addEventListener('change', function() {
+    fetch('/api/device/audio-settings?' + key + '=' + this.checked, {method:'POST'});
+  });
+}
+bindAudioToggle('aecToggle', 'echoCancellation');
+bindAudioToggle('nsToggle', 'noiseSuppression');
+bindAudioToggle('agcToggle', 'autoGainControl');
+
 // ── Init ───────────────────────────────────────────────────────
 loadToday();
 loadDeviceStatus();
 loadTutors();
 loadChildAge();
+loadAudioSettings();
 </script>
 </body>
 </html>

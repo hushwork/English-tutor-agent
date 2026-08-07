@@ -89,8 +89,8 @@ def main() -> None:
             lambda: "设备已连接" in (page.text_content("#status") or ""),
             "page status '🟢 设备已连接'",
         )
-        assert page.get_attribute("#rtcDot", "class") == "dot on"
-        print("✓ page connected (status + RTC indicator)")
+        assert page.get_attribute("#connDot", "class") == "dot on"
+        print("✓ page connected (status + connection indicator)")
 
         # 2. Server side sees the peer
         wait_for(lambda: manager.audio._peer_connected, "server peer_connected")

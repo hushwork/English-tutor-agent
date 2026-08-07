@@ -545,7 +545,7 @@ python3 camera_tutor/realtime_demo.py --reset-devices
 | `realtime_demo.py` | WebSocket 实时语音对话（服务端 VAD、打断、摄像头画面上传）|
 | `dashboard_server.py` | 家长 Dashboard + WebSocket 面部同步 |
 | `avatar.py` | 22 视位标准、发音教学、LLM 对齐 |
-| `tutor_personas.py` | 5 个教师角色（Emma/Serena/Bella/Sophie/Olivia）|
+| `tutor_personas.py` | 6 个教师角色（Emma/Serena/Bella/Sophie/Olivia + Grace 成人面试教练）|
 | `audio_io.py` | VAD、音频流、可打断播放 |
 | `camera.py` | pHash 场景变化检测、自适应帧率 |
 | `omni_client.py` | Qwen-Omni 双后端（本地 + 云端）|
@@ -553,8 +553,10 @@ python3 camera_tutor/realtime_demo.py --reset-devices
 ### 智能教师系统
 
 - **记忆系统**: ConversationMemory + SpacedRepetition — 跨会话持久化对话和词汇
-- **自适应提示词**: 注入已知词汇、常见错误、待复习卡片到系统指令
-- **防重复**: 每次回复后更新指令，展示最近 8 句 + 高频词提醒
+- **多轮对话历史**: 本地管道每次请求携带最近 4 轮对话（`scripts/local_pipe.py`），模型不再"每轮失忆"
+- **精简提示词**: 人设规则 + 学习者画像 + 防复读列表；不注入单词表、不做词数/句数硬限制、无 max_tokens 截断（小模型指令遵循更可靠；单词学习规划后续走 MCP）
+- **防重复**: 每次回复后更新指令，展示最近 8 句提醒
+- **导师热切换**: dashboard 切换导师后下一轮即生效（人设/音色/语速），无需重启 agent
 - **词汇提取**: 从 Emma 的 TTS 文本中自动提取新词（过滤函数词）
 
 ### 唇型同步 (Viseme)
@@ -588,7 +590,8 @@ DASHBOARD_TLS_KEY=/path/to/key.pem
 - 信令：HTTP 一次性 offer/answer（`POST /rtc/offer`），可选 `RTC_TOKEN` 鉴权
 - 音频：上行 48k→16k 重采样，下行 TTS 24k→48k 实时节拍发送
 - 唇形：viseme 随音频配对，经 WebSocket 推送，`VISME_LEAD_MS`（默认 80ms）补偿浏览器缓冲
-- **当前仅限局域网**（无 STUN/TURN）、单 peer
+- 公网：TURN 中转（`RTC_TURN_*` env），局域网开箱即用；单 peer
+- 硬件降级：无摄像头自动转纯语音，无麦克风退到仅预览；麦克风采集开关（AEC/降噪/AGC）在 dashboard Device 标签页可调
 
 完整设计与已知边界：[docs/WEBRTC.md](docs/WEBRTC.md)
 

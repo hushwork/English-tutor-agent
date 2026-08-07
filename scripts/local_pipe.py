@@ -228,6 +228,16 @@ except Exception as e:
     log.warning(f"kokoro CUDA 不可用，回退 CPU: {e}")
 log.info("模型就绪")
 
+# 流式 LLM 输出的按句切分：句尾标点 + 空白/结尾 为一句
+_SENT_END_RE = re.compile(r"^(.*?[.!?。！？])(?:\s+|$)(.*)$", re.S)
+
+def _pop_sentence(buf: str):
+    """从流式缓冲弹出第一句完整的话（含结尾标点）；不够一句返回 (None, 原 buf)。"""
+    m = _SENT_END_RE.match(buf)
+    if not m:
+        return None, buf
+    return m.group(1), m.group(2)
+
 def clean_text(text):
     # 剥掉泄漏的特殊 token：<end_of_turn>、</startofturn、<|channelthought 等
     text = re.sub(r'<\s*/?\s*(start|end)_?of_?turn[^>]*>?', ' ', text, flags=re.IGNORECASE)
@@ -386,69 +396,6 @@ async def process(ws, buf, instructions, voice=DEFAULT_VOICE, speed=0.9,
     # 文本门禁（方案 A）：不在指令表内则拒识——canned 话术直接 TTS（不经 LLM），否则静默
     decision = (gate or GATE).check_text(text)
     from_llm = decision.allowed
-    if not decision.allowed:
-        log.info(f"Gate 拒识({decision.reason}): {text}")
-        if not decision.canned_reply:
-            await ws.send(json.dumps({"type": "response.audio.done", "response_id": "none"}))
-            return
-        reply = clean_text(decision.canned_reply)
-    else:
-        # system prompt：原始 instructions + 场景文本历史（较早的上下文）
-        sys_prompt = instructions or ""
-        if state.scene_history:
-            sys_prompt += ("\n\nSCENE HISTORY (what happened earlier, oldest to newest):\n"
-                           + "\n".join(f"- {s}" for s in state.scene_history))
-
-        # user content：最近 N 帧原图（旧→新）+ 文本
-        images = list(state.frame_buffer)
-        # messages：system + 最近几轮对话历史（纯文本，不带图）+ 当前输入
-        msgs = [{"role": "system", "content": sys_prompt}]
-        if history:
-            msgs.extend(history)
-        async with httpx.AsyncClient(timeout=60) as cli:
-            if images:
-                content = [
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img}"}}
-                    for img in images
-                ]
-                content.append({"type": "text", "text": (
-                    f"These are the last {len(images)} camera frames (oldest to newest). "
-                    f"The child said: {text}. Respond naturally.")})
-                msgs.append({"role": "user", "content": content})
-                payload = {
-                    "model": "gemma4",
-                    "messages": msgs,
-                }
-            else:
-                msgs.append({"role": "user", "content": text})
-                payload = {
-                    "model": "gemma4",
-                    "messages": msgs,
-                }
-            log.info(f"LLM request: images={len(images)} history={len(state.scene_history)} text={text[:30]}")
-            resp = await cli.post(LLM, json=payload)
-            if resp.status_code != 200:
-                reply = "Sorry, I did not catch that."
-            else:
-                try:
-                    reply = resp.json()["choices"][0]["message"]["content"].strip()
-                except (KeyError, IndexError):
-                    reply = "Sorry, I missed that."
-        reply = clean_text(reply)
-        log.info(f"LLM({time.time()-t0:.1f}s): {reply}")
-
-    if not reply:
-        # 整段回复都是舞台指令，剥完为空——跳过本次播报
-        await ws.send(json.dumps({"type": "response.audio.done", "response_id": "none"}))
-        return
-
-    # 记入对话历史（只存文本，图像不重发），供后续轮次引用；拒识话术不进历史
-    if history is not None and from_llm:
-        history.append({"role": "user", "content": text})
-        history.append({"role": "assistant", "content": reply})
-
-    await ws.send(json.dumps({"type": "response.audio_transcript.delta", "delta": reply}))
-    await ws.send(json.dumps({"type": "response.audio_transcript.done", "transcript": reply}))
 
     rid = f"r_{int(time.time()*1000)}"
     await ws.send(json.dumps({"type": "response.created", "response": {"id": rid}}))
@@ -465,26 +412,129 @@ async def process(ws, buf, instructions, voice=DEFAULT_VOICE, speed=0.9,
                 "delta": base64.b64encode(pcm16[i:i+2400].tobytes()).decode(),
             }))
 
-    # 边合成边发：kokoro 逐句产出，首句合成完就开始出声
-    # 全局锁串行化：kokoro_pipe 单例的同步生成器不能被两个协程同时驱动，
-    # 锁内含发送（单句 0.3-0.5s，多连接排队可接受），流式行为不变
-    total = 0.0
-    async with _tts_lock:
-        try:
-            for _gs, _ps, audio in kokoro_pipe(reply, voice=voice, speed=speed):
-                total += len(audio) / 24000
-                await send_audio(audio)
-        except Exception as e:
-            if total == 0:
-                # 音色不可用（如离线缓存缺失）时回退默认音色，不让对话中断
-                log.warning(f"TTS voice {voice} failed ({e}) — fallback to {DEFAULT_VOICE}")
-                for _gs, _ps, audio in kokoro_pipe(reply, voice=DEFAULT_VOICE, speed=speed):
-                    total += len(audio) / 24000
+    tts_total = 0.0
+
+    async def speak(sentence: str) -> None:
+        """合成并流式播出一句话，同时把字幕 delta 推给客户端（边播边显示）。
+
+        kokoro_pipe 是全局单例且生成器是同步密集调用——每句持锁串行
+        （单句 0.3-0.5s，多连接排队可接受）。
+        """
+        nonlocal tts_total
+        await ws.send(json.dumps({"type": "response.audio_transcript.delta", "delta": sentence}))
+        async with _tts_lock:
+            try:
+                for _gs, _ps, audio in kokoro_pipe(sentence, voice=voice, speed=speed):
+                    tts_total += len(audio) / 24000
                     await send_audio(audio)
-            else:
-                log.warning(f"TTS mid-stream error: {e}")
+            except Exception as e:
+                if tts_total == 0:
+                    # 音色不可用（如离线缓存缺失）时回退默认音色，不让对话中断
+                    log.warning(f"TTS voice {voice} failed ({e}) — fallback to {DEFAULT_VOICE}")
+                    for _gs, _ps, audio in kokoro_pipe(sentence, voice=DEFAULT_VOICE, speed=speed):
+                        tts_total += len(audio) / 24000
+                        await send_audio(audio)
+                else:
+                    log.warning(f"TTS mid-stream error: {e}")
+
+    if not decision.allowed:
+        log.info(f"Gate 拒识({decision.reason}): {text}")
+        if not decision.canned_reply:
+            await ws.send(json.dumps({"type": "response.audio.done", "response_id": "none"}))
+            return
+        full_reply = clean_text(decision.canned_reply)
+        if full_reply:
+            await speak(full_reply)
+    else:
+        # system prompt：原始 instructions + 场景文本历史（较早的上下文）
+        sys_prompt = instructions or ""
+        if state.scene_history:
+            sys_prompt += ("\n\nSCENE HISTORY (what happened earlier, oldest to newest):\n"
+                           + "\n".join(f"- {s}" for s in state.scene_history))
+
+        # user content：最近 N 帧原图（旧→新）+ 文本
+        images = list(state.frame_buffer)
+        # messages：system + 最近几轮对话历史（纯文本，不带图）+ 当前输入
+        msgs = [{"role": "system", "content": sys_prompt}]
+        if history:
+            msgs.extend(history)
+        if images:
+            content = [
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img}"}}
+                for img in images
+            ]
+            content.append({"type": "text", "text": (
+                f"These are the last {len(images)} camera frames (oldest to newest). "
+                f"The child said: {text}. Respond naturally.")})
+            msgs.append({"role": "user", "content": content})
+        else:
+            msgs.append({"role": "user", "content": text})
+        payload = {"model": "gemma4", "messages": msgs, "stream": True}
+
+        # 流式 LLM：边生成边按句切分送 TTS，不等整段回复生成完
+        # （原来 await 整段 → LLM 的 1.5-3s 全计入首音延迟；现在首句凑够就播）
+        log.info(f"LLM request: images={len(images)} history={len(state.scene_history)} text={text[:30]}")
+        full_parts: list[str] = []
+        pending = ""
+        spoke_first = False
+        try:
+            async with httpx.AsyncClient(timeout=60) as cli:
+                async with cli.stream("POST", LLM, json=payload) as resp:
+                    if resp.status_code != 200:
+                        log.warning(f"LLM HTTP {resp.status_code}")
+                        pending = "Sorry, I did not catch that."
+                        full_parts = [pending]
+                    else:
+                        async for line in resp.aiter_lines():
+                            if not line.startswith("data:"):
+                                continue
+                            data = line[5:].strip()
+                            if data == "[DONE]":
+                                break
+                            try:
+                                delta = (json.loads(data)["choices"][0]
+                                         .get("delta", {}).get("content") or "")
+                            except (json.JSONDecodeError, KeyError, IndexError):
+                                continue
+                            if not delta:
+                                continue
+                            full_parts.append(delta)
+                            pending += delta
+                            while True:
+                                sent, pending = _pop_sentence(pending)
+                                if sent is None:
+                                    break
+                                sent = clean_text(sent)
+                                if not sent or not re.search(r"[A-Za-z0-9]", sent):
+                                    continue   # 纯标点/舞台指令残片，跳过
+                                if not spoke_first:
+                                    log.info(f"LLM 首句({time.time()-t0:.1f}s): {sent[:40]}")
+                                    spoke_first = True
+                                await speak(sent)
+        except httpx.HTTPError as e:
+            log.warning(f"LLM 请求失败: {e}")
+            pending = "Sorry, I did not catch that."
+            full_parts = [pending]
+        # 收尾：缓冲里不足一句的剩余部分
+        tail = clean_text(pending)
+        if tail and re.search(r"[A-Za-z0-9]", tail):
+            await speak(tail)
+        full_reply = clean_text("".join(full_parts))
+        log.info(f"LLM({time.time()-t0:.1f}s): {full_reply}")
+
+    if not full_reply:
+        # 整段回复都是舞台指令，剥完为空——跳过本次播报
+        await ws.send(json.dumps({"type": "response.audio.done", "response_id": "none"}))
+        return
+
+    # 记入对话历史（只存文本，图像不重发），供后续轮次引用；拒识话术不进历史
+    if history is not None and from_llm:
+        history.append({"role": "user", "content": text})
+        history.append({"role": "assistant", "content": full_reply})
+
+    await ws.send(json.dumps({"type": "response.audio_transcript.done", "transcript": full_reply}))
     await ws.send(json.dumps({"type": "response.audio.done", "response_id": rid}))
-    log.info(f"TTS({time.time()-t0:.1f}s): {total:.1f}s")
+    log.info(f"TTS({time.time()-t0:.1f}s): {tts_total:.1f}s")
 
 async def scene_prober(state):
     """周期性把最新帧发给 VLM 生成一句场景描述，滚入 scene_history。

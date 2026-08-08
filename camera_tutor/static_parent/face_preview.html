@@ -230,7 +230,8 @@ async function startDevice(opts) {
   try {
     stream = await navigator.mediaDevices.getUserMedia({
       audio: audioConstraints,
-      video: { width: 1280, height: 720 },
+      // 960x540：服务端 VLM 只用长边 768，720p 的软编码纯属浪费 Chrome Helper
+      video: { width: 960, height: 540 },
     });
   } catch (e) {
     // 摄像头拿不到就降级为纯语音——对话只需要麦克风；

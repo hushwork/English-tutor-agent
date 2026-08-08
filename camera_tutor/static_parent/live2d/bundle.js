@@ -17475,8 +17475,11 @@ var LAppSubdelegate = class {
    * Resize the canvas to fill the screen.
    */
   resizeCanvas() {
-    this._canvas.width = this._canvas.clientWidth * window.devicePixelRatio;
-    this._canvas.height = this._canvas.clientHeight * window.devicePixelRatio;
+    // 性能补丁（与 live2d-src/lappsubdelegate.ts 同步修改）：
+    // DPR 封顶 1.5，Retina 全屏 canvas 像素量 -44%
+    const ratio = Math.min(window.devicePixelRatio, 1.5);
+    this._canvas.width = this._canvas.clientWidth * ratio;
+    this._canvas.height = this._canvas.clientHeight * ratio;
     const gl = this._glManager.getGl();
     gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
   }
@@ -17603,17 +17606,25 @@ var LAppDelegate = class _LAppDelegate {
    * 実行処理。
    */
   run() {
-    const loop = () => {
+    // 性能补丁（与 live2d-src/lappdelegate.ts 同步修改）：
+    // 30fps 封顶 + 页面不可见时跳过渲染——WebRTC 音频让标签页保持
+    // "活跃"，Chrome 不会自动节流 rAF，必须自己判 hidden
+    const FRAME_MS = 1000 / 30;
+    let lastFrame = 0;
+    const loop = (now) => {
       if (s_instance2 == null) {
         return;
       }
-      LAppPal.updateTime();
-      for (let i = 0; i < this._subdelegates.length; i++) {
-        this._subdelegates[i].update();
+      if (now - lastFrame >= FRAME_MS && !document.hidden) {
+        lastFrame = now;
+        LAppPal.updateTime();
+        for (let i = 0; i < this._subdelegates.length; i++) {
+          this._subdelegates[i].update();
+        }
       }
       requestAnimationFrame(loop);
     };
-    loop();
+    requestAnimationFrame(loop);
   }
   /**
    * 解放する。

@@ -247,8 +247,11 @@ export class LAppSubdelegate {
    * Resize the canvas to fill the screen.
    */
   private resizeCanvas(): void {
-    this._canvas.width = this._canvas.clientWidth * window.devicePixelRatio;
-    this._canvas.height = this._canvas.clientHeight * window.devicePixelRatio;
+    // DPR 封顶 1.5：Retina（dpr=2+）全屏 canvas 的像素量是 4 倍起步，
+    // WindowServer/GPU 占用爆炸的主因；1.5 肉眼几乎无损、像素量 -44%
+    const ratio = Math.min(window.devicePixelRatio, 1.5);
+    this._canvas.width = this._canvas.clientWidth * ratio;
+    this._canvas.height = this._canvas.clientHeight * ratio;
 
     const gl = this._glManager.getGl();
 

@@ -92,8 +92,14 @@ export class LAppDelegate {
    * 実行処理。
    */
   public run(): void {
+    // 30fps 封顶：语音陪练场景 60/120fps（ProMotion）纯属浪费——
+    // GPU/WindowServer 占用的大头就是全屏 WebGL 刷新率。
+    // 页面不可见（切标签页/最小化）时跳过渲染：WebRTC 音频让标签页
+    // 保持"活跃"，Chrome 不会自动节流 rAF，必须自己判 hidden。
+    const FRAME_MS = 1000 / 30;
+    let lastFrame = 0;
     // メインループ
-    const loop = (): void => {
+    const loop = (now: number): void => {
       // インスタンスの有無の確認。
       // _subdelegates の null チェックも必要：ページ遷移時の beforeunload で
       // release() されると _subdelegates は null になるが、既にキューに
@@ -103,17 +109,21 @@ export class LAppDelegate {
         return;
       }
 
-      // 時間更新
-      LAppPal.updateTime();
+      if (now - lastFrame >= FRAME_MS && !document.hidden) {
+        lastFrame = now;
 
-      for (let i = 0; i < this._subdelegates.length; i++) {
-        this._subdelegates[i].update();
+        // 時間更新
+        LAppPal.updateTime();
+
+        for (let i = 0; i < this._subdelegates.length; i++) {
+          this._subdelegates[i].update();
+        }
       }
 
       // ループのために再帰呼び出し
       requestAnimationFrame(loop);
     };
-    loop();
+    requestAnimationFrame(loop);
   }
 
   /**

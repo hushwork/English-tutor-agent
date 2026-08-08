@@ -107,6 +107,14 @@ class PracticeSession:
         self.memory = ConversationMemory(storage_dir=self._storage_dir, user_id=user_id)
         self.memory.new_session()
         logger.info("[%s] Conversation memory: %s", user_id, self.memory._data_dir)
+        # 上一次会话的最近几轮（注入 instructions，让导师能"接着上次聊"；
+        # 必须在 new_session 之后、本会话写入任何消息之前抓取）
+        self._prev_session_tail: list[dict] = (
+            self.memory.get_previous_session_messages()
+        )
+        if self._prev_session_tail:
+            logger.info("[%s] 延续上次会话上下文（%d 条消息）",
+                        user_id, len(self._prev_session_tail))
         self.sr = SpacedRepetition(storage_dir=self._storage_dir, user_id=user_id)
         logger.info("[%s] Spaced repetition: %s", user_id, self.sr._data_dir)
 
@@ -587,7 +595,7 @@ class PracticeSession:
             f"VISION: You receive real-time camera images — use what you SEE.\n\n"
             f"YOUR MISSION: Be a friendly companion who happens to speak English.\n"
             f"Follow the child's lead. Chat, play, wonder — don't teach or quiz.\n\n"
-            f"{session_info}{errors_line}{repeated_warning}{recent_line}"
+            f"{session_info}{self._get_prev_session_line()}{errors_line}{repeated_warning}{recent_line}"
             f"YOUR STYLE:\n"
             f"1. Short and natural, like talking to a friend.\n"
             f"2. Switch it up: sometimes playful 🎨, sometimes curious 🔍,\n"
@@ -625,6 +633,7 @@ class PracticeSession:
             f"Personality: {', '.join(self.tutor.personality_traits[:3])}.\n\n"
             f"{self.tutor._tutor_rules()}\n\n"
             f"IMPORTANT: The user speaks ENGLISH. Transcribe as English.\n"
+            f"{self._get_prev_session_line()}"
             f"{recent_line}\n"
             f"YOUR STYLE:\n"
             f"1. Speak naturally — as long as the point needs, no filler.\n"
@@ -664,6 +673,16 @@ class PracticeSession:
             f"- Vocabulary tracked: {len(s.get('vocabulary', []))} words\n"
             f"- Spaced repetition cards: {sr_total} cards\n\n"
         )
+
+    def _get_prev_session_line(self) -> str:
+        """上次会话的最近几轮对话（重启/重连后延续上下文）。"""
+        if not self._prev_session_tail:
+            return ""
+        lines = ["LAST SESSION (continue naturally from where you left off):"]
+        for m in self._prev_session_tail:
+            who = "You" if m.get("role") == "assistant" else "Learner"
+            lines.append(f"  {who}: {m.get('content', '')[:120]}")
+        return "\n".join(lines) + "\n\n"
 
     def _check_vocabulary(self, text: str, is_emma: bool) -> None:
         if not text.strip():

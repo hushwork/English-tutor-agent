@@ -125,6 +125,24 @@ class ConversationMemory:
         except (json.JSONDecodeError, OSError):
             return False
 
+    def get_previous_session_messages(self, max_messages: int = 8) -> list[dict]:
+        """读取上一次会话的最近几轮消息，供新会话延续上下文。
+
+        文件名带时间戳，按名称倒序第一个非当前会话且非空的文件即"上一次"。
+        在 new_session() 之后、本会话写入任何消息之前调用。
+        """
+        for f in sorted(self._sessions_dir.glob("session_*.json"), reverse=True):
+            if f.stem == f"session_{self.session_id}":
+                continue
+            try:
+                data = json.loads(f.read_text())
+            except (json.JSONDecodeError, OSError):
+                continue
+            msgs = data.get("messages", [])
+            if msgs:
+                return msgs[-max_messages:]
+        return []
+
     def _auto_save(self):
         """Auto-save the current session."""
         if not self.session_id:

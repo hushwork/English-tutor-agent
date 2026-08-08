@@ -77,7 +77,7 @@ class PracticeSession:
                  audio, camera=None,
                  reporter: Optional[ParentReportEngine] = None,
                  reporter_lock: Optional[threading.Lock] = None,
-                 fresh: bool = False):
+                 fresh: bool = False, resume_from: str = ""):
         self.config = config
         self.user_id = user_id
         self.session_id = session_id
@@ -110,15 +110,21 @@ class PracticeSession:
         logger.info("[%s] Conversation memory: %s", user_id, self.memory._data_dir)
         # 上一次会话的最近几轮（注入 instructions，让导师能"接着上次聊"；
         # 必须在 new_session 之后、本会话写入任何消息之前抓取）。
-        # fresh=True（用户点了"开始新对话"）时不注入，从头开始。
-        self._prev_session_tail: list[dict] = (
-            [] if fresh else self.memory.get_previous_session_messages()
-        )
+        # 优先级：fresh=True（"开始新对话"）→ 不注入；
+        # resume_from 非空（"接着聊"某条历史对话）→ 注入该会话；
+        # 否则延续上一次会话。
         if fresh:
+            self._prev_session_tail: list[dict] = []
             logger.info("[%s] 新对话（不延续上次上下文）", user_id)
-        elif self._prev_session_tail:
-            logger.info("[%s] 延续上次会话上下文（%d 条消息）",
-                        user_id, len(self._prev_session_tail))
+        elif resume_from:
+            self._prev_session_tail = self.memory.get_session_messages(resume_from)
+            logger.info("[%s] 续聊指定会话 %s（%d 条消息）",
+                        user_id, resume_from, len(self._prev_session_tail))
+        else:
+            self._prev_session_tail = self.memory.get_previous_session_messages()
+            if self._prev_session_tail:
+                logger.info("[%s] 延续上次会话上下文（%d 条消息）",
+                            user_id, len(self._prev_session_tail))
         self.sr = SpacedRepetition(storage_dir=self._storage_dir, user_id=user_id)
         logger.info("[%s] Spaced repetition: %s", user_id, self.sr._data_dir)
 

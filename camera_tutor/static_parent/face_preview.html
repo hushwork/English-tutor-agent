@@ -34,6 +34,30 @@
   #startOverlay button { font:16px sans-serif; padding:14px 32px; border-radius:10px; border:none; background:#4ecf8d; color:#0f1117; cursor:pointer; }
   #startOverlay button.secondary { background:transparent; border:1px solid #4ecf8d; color:#4ecf8d; }
 
+  /* 对话记录面板：左上角徽章下方，可折叠，窄条不遮挡 Live2D 主体 */
+  #historyPanel { position:fixed; top:56px; left:12px; z-index:300; width:280px;
+    background:rgba(20,23,32,.72); border:1px solid #2a2d3a; border-radius:12px;
+    color:#e6e8f0; font:13px sans-serif; backdrop-filter:blur(4px); overflow:hidden; }
+  #historyToggle { width:100%; padding:8px 12px; background:transparent; border:none;
+    color:#e6e8f0; font:13px sans-serif; cursor:pointer; text-align:left; }
+  #historyToggle:hover { background:rgba(40,44,58,.85); }
+  #historyBody { padding:0 10px 10px; display:none; }
+  #newChatBtn { width:100%; padding:8px; margin-bottom:8px; border-radius:8px; cursor:pointer;
+    border:1px solid #4ecf8d; background:transparent; color:#4ecf8d; font:13px sans-serif; }
+  #newChatBtn:hover { background:rgba(78,207,141,.12); }
+  .sessionRow { padding:7px 8px; border-radius:6px; cursor:pointer; color:#c9cddb; }
+  .sessionRow:hover { background:rgba(40,44,58,.85); }
+  .sessionRow .meta { color:#8b8fa3; font-size:12px; }
+  #sessionList { max-height:40vh; overflow-y:auto; }
+  #sessionMsgs { max-height:40vh; overflow-y:auto; margin:8px 0; padding:8px;
+    background:rgba(15,17,23,.6); border-radius:8px; font-size:12px; line-height:1.6;
+    color:#c9cddb; word-break:break-word; }
+  #sessionMsgs .who { color:#8b8fa3; }
+  #resumeBtn, #backToListBtn { padding:6px 12px; border-radius:8px; border:none;
+    cursor:pointer; font:13px sans-serif; }
+  #resumeBtn { background:#4ecf8d; color:#0f1117; }
+  #backToListBtn { background:transparent; color:#8b8fa3; }
+
   /* 移动端适配 */
   @media (max-width: 600px) {
     #info { bottom:8px; max-width:94vw; font-size:12px; gap:8px; flex-wrap:wrap; justify-content:center; }
@@ -44,19 +68,31 @@
     #localCam, #camera { width:26vw !important; max-width:120px; top:48px; right:8px; }
     #settingsBtn { top:8px; right:8px; width:32px; height:32px; font-size:15px; }
     #startOverlay button { font-size:18px; padding:18px 44px; }
+    #historyPanel { top:48px; left:8px; width:min(72vw, 280px); }
   }
 </style>
 </head>
 <body>
 <div id="tutorBadge"><span class="emoji" id="tutorEmoji">👩‍🏫</span><span class="name" id="tutorName">…</span></div>
+<div id="historyPanel">
+  <button id="historyToggle">💬 对话记录 ▾</button>
+  <div id="historyBody">
+    <button id="newChatBtn">🆕 新对话</button>
+    <div id="sessionListWrap"><div id="sessionList"></div></div>
+    <div id="sessionDetail" style="display:none">
+      <div id="sessionMsgs"></div>
+      <button id="resumeBtn">▶️ 接着聊</button>
+      <button id="backToListBtn">← 返回</button>
+    </div>
+  </div>
+</div>
 <a id="settingsBtn" href="/dashboard" target="_blank" rel="noopener" title="设置 / Dashboard">⚙️</a>
 <img id="camera">
 <video id="localCam" autoplay muted playsinline
        style="position:fixed;top:56px;right:12px;width:160px;border-radius:8px;border:2px solid #2a2d3a;opacity:0.85;z-index:100;display:none;"></video>
 <audio id="remoteAudio" autoplay></audio>
 <div id="startOverlay">
-  <button id="startBtn">🎤 继续上次对话</button>
-  <button id="freshBtn" class="secondary">🆕 开始新对话</button>
+  <button id="startBtn">🎤 进入对话</button>
   <button id="previewBtn" class="secondary" style="display:none">👀 仅预览（无需麦克风/摄像头）</button>
 </div>
 <div id="subtitle"></div>
@@ -159,11 +195,13 @@ function renderConn() {
 })();
 
 // ── Device mode: this browser IS the mic/camera/speaker (WebRTC) ──
-// fresh：新开对话——不延续上次会话上下文（默认续上次的最近几轮）；
-// 也可用 URL ?fresh=1 指定。自动重连不传参，保持原选择。
-window._freshSession = new URLSearchParams(location.search).get('fresh') === '1';
-async function startDevice(fresh) {
-  if (fresh !== undefined) window._freshSession = !!fresh;
+// 会话模式：{fresh:true} 新开对话 / {resume_from:"会话ID"} 接着某条历史
+// 对话聊 / {fresh:false} 续上次（默认）；也可用 URL ?fresh=1 指定。
+// 自动重连不传参，保持上次选择。
+window._startOpts = { fresh: new URLSearchParams(location.search).get('fresh') === '1',
+                      resume_from: '' };
+async function startDevice(opts) {
+  if (opts) window._startOpts = { fresh: !!opts.fresh, resume_from: opts.resume_from || '' };
   document.getElementById('startOverlay').style.display = 'none';
   const statusEl = document.getElementById('status');
 
@@ -261,7 +299,8 @@ async function startDevice(fresh) {
     const resp = await fetch('/rtc/offer', {
       method: 'POST', headers,
       body: JSON.stringify({ sdp: pc.localDescription.sdp, type: pc.localDescription.type,
-                             user_id: USER_ID, fresh: !!window._freshSession }),
+                             user_id: USER_ID, fresh: !!window._startOpts.fresh,
+                             resume_from: window._startOpts.resume_from || '' }),
     });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     await pc.setRemoteDescription(await resp.json());
@@ -275,13 +314,90 @@ async function startDevice(fresh) {
 if (DEVICE_MODE) {
   document.getElementById('startOverlay').style.display = 'flex';
   document.getElementById('status').textContent = '设备模式';
-  document.getElementById('startBtn').onclick = () => startDevice(false);
-  document.getElementById('freshBtn').onclick = () => startDevice(true);
+  document.getElementById('startBtn').onclick = () => startDevice({ fresh: false });
   document.getElementById('previewBtn').onclick = () => {
     document.getElementById('startOverlay').style.display = 'none';
     document.getElementById('status').textContent = '👀 仅预览模式';
   };
 }
+
+// ── 对话记录面板：新对话 / 历史列表 / 接着聊（与连接状态无关，随时可看） ──
+(function initHistoryPanel() {
+  const toggle = document.getElementById('historyToggle');
+  const body = document.getElementById('historyBody');
+  const listWrap = document.getElementById('sessionListWrap');
+  const listEl = document.getElementById('sessionList');
+  const detail = document.getElementById('sessionDetail');
+  const msgsEl = document.getElementById('sessionMsgs');
+  let open = false;
+  let currentSessionId = '';
+
+  toggle.onclick = () => {
+    open = !open;
+    body.style.display = open ? 'block' : 'none';
+    toggle.textContent = open ? '💬 对话记录 ▴' : '💬 对话记录 ▾';
+    if (open) loadList();
+  };
+
+  document.getElementById('newChatBtn').onclick = () => startDevice({ fresh: true });
+  document.getElementById('resumeBtn').onclick = () => {
+    if (currentSessionId) startDevice({ resume_from: currentSessionId });
+  };
+  document.getElementById('backToListBtn').onclick = () => {
+    detail.style.display = 'none';
+    listWrap.style.display = 'block';
+  };
+
+  async function loadList() {
+    listEl.textContent = '加载中…';
+    try {
+      const r = await fetch('/api/sessions?user=' + encodeURIComponent(USER_ID));
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const sessions = (await r.json()).sessions || [];
+      if (!sessions.length) { listEl.textContent = '还没有历史对话'; return; }
+      listEl.innerHTML = '';
+      for (const s of sessions) {
+        const row = document.createElement('div');
+        row.className = 'sessionRow';
+        const date = (s.date || '').replace('T', ' ').slice(0, 16);
+        row.innerHTML = '<div>' + escapeHtml(date || s.id) + '</div>' +
+          '<div class="meta">' + s.message_count + ' 条消息 · ' +
+          s.word_count + ' 词</div>';
+        row.onclick = () => loadDetail(s.id);
+        listEl.appendChild(row);
+      }
+    } catch (e) {
+      listEl.textContent = '加载失败: ' + e.message;
+    }
+  }
+
+  async function loadDetail(id) {
+    currentSessionId = id;
+    try {
+      const r = await fetch('/api/sessions/' + encodeURIComponent(id) +
+                            '?user=' + encodeURIComponent(USER_ID));
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const messages = (await r.json()).messages || [];
+      msgsEl.innerHTML = '';
+      for (const m of messages) {
+        const div = document.createElement('div');
+        const who = m.role === 'assistant' ? '导师' : '学员';
+        div.innerHTML = '<span class="who">' + who + ':</span> ' +
+          escapeHtml(m.content || '');
+        msgsEl.appendChild(div);
+      }
+      listWrap.style.display = 'none';
+      detail.style.display = 'block';
+      msgsEl.scrollTop = msgsEl.scrollHeight;
+    } catch (e) { /* 拉取失败留在列表页，下条再试 */ }
+  }
+
+  function escapeHtml(t) {
+    return String(t).replace(/[&<>"']/g, c => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[c]));
+  }
+})();
 </script>
 </body>
 </html>

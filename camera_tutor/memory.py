@@ -125,6 +125,24 @@ class ConversationMemory:
         except (json.JSONDecodeError, OSError):
             return False
 
+    def get_session_messages(self, session_id: str,
+                             max_messages: int = 8) -> list[dict]:
+        """读取指定会话的消息尾部（只读，供"接着聊"注入上下文）。
+
+        session_id 必须严格匹配时间戳格式（防路径穿越）；
+        会话不存在或文件损坏时返回 []。
+        """
+        import re
+        if not re.fullmatch(r"\d{8}_\d{6}", session_id):
+            return []
+        path = self._sessions_dir / f"session_{session_id}.json"
+        try:
+            data = json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            return []
+        msgs = data.get("messages", [])
+        return msgs[-max_messages:] if msgs else []
+
     def get_previous_session_messages(self, max_messages: int = 8) -> list[dict]:
         """读取上一次会话的最近几轮消息，供新会话延续上下文。
 

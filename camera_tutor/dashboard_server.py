@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -591,6 +592,31 @@ async def health_check():
 
 # ── WebRTC device signaling ─────────────────────────────────────
 
+SESSION_ID_RE = re.compile(r"^\d{8}_\d{6}$")
+
+
+@app.get("/api/sessions")
+async def list_sessions(user: str = ""):
+    """历史对话列表（练习页"接着聊"面板）：日期 + 消息数，新的在前。"""
+    return {"sessions": _memory_for(user).list_sessions()}
+
+
+@app.get("/api/sessions/{session_id}")
+async def get_session(session_id: str, user: str = ""):
+    """某条历史对话的完整文字记录（练习页展开查看/接着聊）。"""
+    mem = _memory_for(user)
+    if not SESSION_ID_RE.match(session_id):
+        raise HTTPException(status_code=400, detail="invalid session_id")
+    path = mem._sessions_dir / f"session_{session_id}.json"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="session not found")
+    try:
+        data = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        raise HTTPException(status_code=404, detail="session not found")
+    return {"session_id": session_id, "messages": data.get("messages", [])}
+
+
 @app.post("/rtc/offer")
 async def rtc_offer(request: Request):
     """WebRTC signaling: browser sends an SDP offer, gets an answer.
@@ -625,7 +651,8 @@ async def rtc_offer(request: Request):
     try:
         return await manager.handle_offer(
             sdp, offer_type, user_id=user_id,
-            fresh=bool(payload.get("fresh")))
+            fresh=bool(payload.get("fresh")),
+            resume_from=payload.get("resume_from", ""))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

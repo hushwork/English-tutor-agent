@@ -300,6 +300,7 @@ class CameraTutorAgent:
             camera=camera,
             reporter=report_engine_for(rtc_session.user_id),
             reporter_lock=self._reporter_lock,
+            fresh=getattr(rtc_session, "fresh", False),
         )
         with self._sessions_lock:
             self._sessions[rtc_session.session_id] = session

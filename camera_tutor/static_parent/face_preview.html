@@ -55,7 +55,8 @@
        style="position:fixed;top:56px;right:12px;width:160px;border-radius:8px;border:2px solid #2a2d3a;opacity:0.85;z-index:100;display:none;"></video>
 <audio id="remoteAudio" autoplay></audio>
 <div id="startOverlay">
-  <button id="startBtn">🎤 点击开始对话</button>
+  <button id="startBtn">🎤 继续上次对话</button>
+  <button id="freshBtn" class="secondary">🆕 开始新对话</button>
   <button id="previewBtn" class="secondary" style="display:none">👀 仅预览（无需麦克风/摄像头）</button>
 </div>
 <div id="subtitle"></div>
@@ -158,7 +159,11 @@ function renderConn() {
 })();
 
 // ── Device mode: this browser IS the mic/camera/speaker (WebRTC) ──
-async function startDevice() {
+// fresh：新开对话——不延续上次会话上下文（默认续上次的最近几轮）；
+// 也可用 URL ?fresh=1 指定。自动重连不传参，保持原选择。
+window._freshSession = new URLSearchParams(location.search).get('fresh') === '1';
+async function startDevice(fresh) {
+  if (fresh !== undefined) window._freshSession = !!fresh;
   document.getElementById('startOverlay').style.display = 'none';
   const statusEl = document.getElementById('status');
 
@@ -255,7 +260,8 @@ async function startDevice() {
     if (RTC_TOKEN) headers['Authorization'] = 'Bearer ' + RTC_TOKEN;
     const resp = await fetch('/rtc/offer', {
       method: 'POST', headers,
-      body: JSON.stringify({ sdp: pc.localDescription.sdp, type: pc.localDescription.type, user_id: USER_ID }),
+      body: JSON.stringify({ sdp: pc.localDescription.sdp, type: pc.localDescription.type,
+                             user_id: USER_ID, fresh: !!window._freshSession }),
     });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     await pc.setRemoteDescription(await resp.json());
@@ -269,7 +275,8 @@ async function startDevice() {
 if (DEVICE_MODE) {
   document.getElementById('startOverlay').style.display = 'flex';
   document.getElementById('status').textContent = '设备模式';
-  document.getElementById('startBtn').onclick = startDevice;
+  document.getElementById('startBtn').onclick = () => startDevice(false);
+  document.getElementById('freshBtn').onclick = () => startDevice(true);
   document.getElementById('previewBtn').onclick = () => {
     document.getElementById('startOverlay').style.display = 'none';
     document.getElementById('status').textContent = '👀 仅预览模式';

@@ -623,7 +623,9 @@ async def rtc_offer(request: Request):
     # validate_user_id 拒绝非法 ID（路径穿越防护）时返回 400。
     user_id = payload.get("user_id", "")
     try:
-        return await manager.handle_offer(sdp, offer_type, user_id=user_id)
+        return await manager.handle_offer(
+            sdp, offer_type, user_id=user_id,
+            fresh=bool(payload.get("fresh")))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

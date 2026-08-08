@@ -577,9 +577,12 @@ class RTCSession:
 
     def __init__(self, session_id: str, user_id: str,
                  mic_gain: float = DEFAULT_MIC_GAIN,
-                 viseme_lead_ms: int = DEFAULT_VISME_LEAD_MS):
+                 viseme_lead_ms: int = DEFAULT_VISME_LEAD_MS,
+                 fresh: bool = False):
         self.session_id = session_id
         self.user_id = user_id
+        # fresh=True：用户主动"开始新对话"，PracticeSession 不延续上次上下文
+        self.fresh = fresh
         self.audio = RTCAudioManager(mic_gain=mic_gain,
                                      viseme_lead_ms=viseme_lead_ms)
         self.camera = RTCFrameSource()
@@ -622,13 +625,14 @@ class RTCDeviceManager:
         return self._sessions.get(session_id)
 
     async def handle_offer(self, sdp: str, offer_type: str,
-                           user_id: str = "") -> dict:
+                           user_id: str = "", fresh: bool = False) -> dict:
         """Handle a browser SDP offer; return the answer as a dict.
 
         Runs in the uvicorn event loop (called from the FastAPI endpoint).
         新用户创建独立 RTCSession；同一 user_id 重复 offer 走重挂路径
-        （复用 seam 对象，只换 peer connection）。返回值带 session_id/
-        user_id（浏览器可忽略多余字段，兼容旧版前端）。
+        （复用 seam 对象，只换 peer connection）；fresh=True 表示用户主动
+        "开始新对话"——彻底关闭旧会话（不走重挂），新建不带上次上下文。
+        返回值带 session_id/user_id（浏览器可忽略多余字段，兼容旧版前端）。
         """
         user_id = validate_user_id(user_id)
         if self._offer_lock is None:
@@ -641,6 +645,11 @@ class RTCDeviceManager:
             session = next(
                 (s for s in self._sessions.values() if s.user_id == user_id),
                 None)
+            if session is not None and fresh:
+                logger.info("RTC: user %s requested FRESH session — closing %s",
+                            user_id, session.session_id)
+                await self._close_session(session)
+                session = None
             is_reattach = session is not None
             if is_reattach:
                 logger.info("RTC: user %s re-attaching session %s (new peer)",
@@ -657,6 +666,7 @@ class RTCDeviceManager:
                     user_id=user_id,
                     mic_gain=self._mic_gain,
                     viseme_lead_ms=self._viseme_lead_ms,
+                    fresh=fresh,
                 )
                 self._sessions[session.session_id] = session
 

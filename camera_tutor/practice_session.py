@@ -76,7 +76,8 @@ class PracticeSession:
     def __init__(self, config: "AgentConfig", user_id: str, session_id: str,
                  audio, camera=None,
                  reporter: Optional[ParentReportEngine] = None,
-                 reporter_lock: Optional[threading.Lock] = None):
+                 reporter_lock: Optional[threading.Lock] = None,
+                 fresh: bool = False):
         self.config = config
         self.user_id = user_id
         self.session_id = session_id
@@ -108,11 +109,14 @@ class PracticeSession:
         self.memory.new_session()
         logger.info("[%s] Conversation memory: %s", user_id, self.memory._data_dir)
         # 上一次会话的最近几轮（注入 instructions，让导师能"接着上次聊"；
-        # 必须在 new_session 之后、本会话写入任何消息之前抓取）
+        # 必须在 new_session 之后、本会话写入任何消息之前抓取）。
+        # fresh=True（用户点了"开始新对话"）时不注入，从头开始。
         self._prev_session_tail: list[dict] = (
-            self.memory.get_previous_session_messages()
+            [] if fresh else self.memory.get_previous_session_messages()
         )
-        if self._prev_session_tail:
+        if fresh:
+            logger.info("[%s] 新对话（不延续上次上下文）", user_id)
+        elif self._prev_session_tail:
             logger.info("[%s] 延续上次会话上下文（%d 条消息）",
                         user_id, len(self._prev_session_tail))
         self.sr = SpacedRepetition(storage_dir=self._storage_dir, user_id=user_id)

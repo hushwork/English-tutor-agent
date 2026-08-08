@@ -32,6 +32,7 @@ from camera_tutor.paths import data_dir
 
 # Memory & SR (self-contained camera_tutor modules)
 from camera_tutor.memory import ConversationMemory
+from camera_tutor.session_recorder import SessionRecorder
 from camera_tutor.spaced_repetition import SpacedRepetition
 
 if TYPE_CHECKING:
@@ -128,7 +129,20 @@ class PracticeSession:
         self.sr = SpacedRepetition(storage_dir=self._storage_dir, user_id=user_id)
         logger.info("[%s] Spaced repetition: %s", user_id, self.sr._data_dir)
 
+        # 会话录音：双向音频合成单个 16kHz WAV，文件名与历史面板的会话 id
+        # 同名，dashboard 音频回放按此查找。RECORD_AUDIO=0 时完全不创建。
+        self._recorder: Optional[SessionRecorder] = None
+        if os.environ.get("RECORD_AUDIO", "1") != "0":
+            try:
+                rec_dir = self.memory._data_dir / "recordings"
+                rec_path = rec_dir / f"session_{self.memory.session_id}.wav"
+                self._recorder = SessionRecorder(rec_path)
+                logger.info("[%s] Session recording: %s", user_id, rec_path)
+            except Exception as e:
+                logger.warning("[%s] 会话录音初始化失败（不录音）: %s", user_id, e)
+
         # Track recent utterances for context
+
         self._last_child_utterance: str = ""
         self._last_emma_utterance: str = ""
         self._utterances_this_session: int = 0
@@ -196,6 +210,12 @@ class PracticeSession:
                 self.memory._save_stats()
             except Exception:
                 pass
+
+        # 关闭会话录音（幂等；置 None 后 write 路径自然短路，
+        # 残余线程即使拿到旧引用，close 后的写入也会被忽略）
+        if self._recorder:
+            self._recorder.close()
+            self._recorder = None
 
         if hasattr(self, "_calib_chunks") and self._calib_chunks:
             self._save_calibration_wav()
@@ -349,6 +369,10 @@ class PracticeSession:
             chunk = base64.b64decode(event["delta"])
             viseme_payloads = self._extract_viseme_payloads(chunk)
             self.audio.write_spk(chunk, visemes=viseme_payloads)
+            # 会话录音：TTS 下行（24kHz→16kHz 重采样在 recorder 内完成）
+            rec = self._recorder
+            if rec:
+                rec.write_tts(chunk)
             # Calibration: save audio to file if env var is set
             if os.environ.get("SAVE_CALIBRATION_AUDIO"):
                 if not hasattr(self, "_calib_chunks"):
@@ -436,6 +460,10 @@ class PracticeSession:
             if data is None:
                 time.sleep(0.01)
                 continue
+            # 会话录音：mic 上行直接落盘（close 后写入被忽略，stop 后安全）
+            rec = self._recorder
+            if rec:
+                rec.write_mic(data)
             try:
                 ws.send(json.dumps({
                     "type": "input_audio_buffer.append",

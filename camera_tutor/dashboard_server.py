@@ -597,8 +597,32 @@ SESSION_ID_RE = re.compile(r"^\d{8}_\d{6}$")
 
 @app.get("/api/sessions")
 async def list_sessions(user: str = ""):
-    """历史对话列表（练习页"接着聊"面板）：日期 + 消息数，新的在前。"""
-    return {"sessions": _memory_for(user).list_sessions()}
+    """历史对话列表（练习页"接着聊"面板）：日期 + 消息数，新的在前。
+
+    每项带 has_audio 标记：对应录音 wav 存在时为 true（练习页显示 ▶️ 回放）。
+    """
+    mem = _memory_for(user)
+    rec_dir = mem._data_dir / "recordings"
+    sessions = mem.list_sessions()
+    for s in sessions:
+        s["has_audio"] = (rec_dir / f"session_{s['id']}.wav").exists()
+    return {"sessions": sessions}
+
+
+@app.get("/api/sessions/{session_id}/audio")
+async def get_session_audio(session_id: str, user: str = ""):
+    """某条历史对话的录音回放（wav）。
+
+    legacy（user 空串）路径是 data_dir()/recordings，
+    per-user 是 data_dir()/{user}/recordings（即 mem._data_dir/recordings）。
+    """
+    mem = _memory_for(user)
+    if not SESSION_ID_RE.match(session_id):
+        raise HTTPException(status_code=400, detail="invalid session_id")
+    path = mem._data_dir / "recordings" / f"session_{session_id}.wav"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="audio not found")
+    return FileResponse(path, media_type="audio/wav")
 
 
 @app.get("/api/sessions/{session_id}")

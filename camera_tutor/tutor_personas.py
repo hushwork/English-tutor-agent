@@ -240,7 +240,7 @@ TUTOR_LIBRARY: dict[str, TutorPersona] = {
         teaching_style="professional",
         personality_traits=["professional", "encouraging", "structured", "direct"],
         age_appearance="35",
-        speed=1.0,
+        speed=0.9,
         audience="adult",
     ),
 }

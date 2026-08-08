@@ -45,9 +45,14 @@
   #newChatBtn { width:100%; padding:8px; margin-bottom:8px; border-radius:8px; cursor:pointer;
     border:1px solid #4ecf8d; background:transparent; color:#4ecf8d; font:13px sans-serif; }
   #newChatBtn:hover { background:rgba(78,207,141,.12); }
-  .sessionRow { padding:7px 8px; border-radius:6px; cursor:pointer; color:#c9cddb; }
+  .sessionRow { padding:7px 8px; border-radius:6px; cursor:pointer; color:#c9cddb;
+    display:flex; align-items:center; }
   .sessionRow:hover { background:rgba(40,44,58,.85); }
   .sessionRow .meta { color:#8b8fa3; font-size:12px; }
+  .sessionRow .rowText { flex:1; min-width:0; }
+  .playBtn { background:transparent; border:none; cursor:pointer; font-size:14px;
+    padding:2px 4px; border-radius:6px; }
+  .playBtn:hover { background:rgba(78,207,141,.12); }
   #sessionList { max-height:40vh; overflow-y:auto; }
   #sessionMsgs { max-height:40vh; overflow-y:auto; margin:8px 0; padding:8px;
     background:rgba(15,17,23,.6); border-radius:8px; font-size:12px; line-height:1.6;
@@ -348,6 +353,26 @@ if (DEVICE_MODE) {
     listWrap.style.display = 'block';
   };
 
+  // 录音回放：全局单实例，播新的自动停旧的；再点同一按钮停止
+  let currentAudio = null;
+  let currentAudioBtn = null;
+  function stopSessionAudio() {
+    if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+    if (currentAudioBtn) { currentAudioBtn.textContent = '▶️'; currentAudioBtn = null; }
+  }
+  function toggleSessionAudio(id, btn) {
+    if (currentAudioBtn === btn) { stopSessionAudio(); return; }
+    stopSessionAudio();
+    const a = new Audio('/api/sessions/' + encodeURIComponent(id) +
+                        '/audio?user=' + encodeURIComponent(USER_ID));
+    currentAudio = a;
+    currentAudioBtn = btn;
+    btn.textContent = '⏸️';
+    a.onended = () => stopSessionAudio();
+    a.onerror = () => stopSessionAudio();
+    a.play().catch(() => stopSessionAudio());
+  }
+
   async function loadList() {
     listEl.textContent = '加载中…';
     try {
@@ -356,13 +381,25 @@ if (DEVICE_MODE) {
       const sessions = (await r.json()).sessions || [];
       if (!sessions.length) { listEl.textContent = '还没有历史对话'; return; }
       listEl.innerHTML = '';
+      stopSessionAudio();  // 列表重绘后旧按钮失效，先停掉进行中的回放
       for (const s of sessions) {
         const row = document.createElement('div');
         row.className = 'sessionRow';
         const date = (s.date || '').replace('T', ' ').slice(0, 16);
-        row.innerHTML = '<div>' + escapeHtml(date || s.id) + '</div>' +
+        const txt = document.createElement('div');
+        txt.className = 'rowText';
+        txt.innerHTML = '<div>' + escapeHtml(date || s.id) + '</div>' +
           '<div class="meta">' + s.message_count + ' 条消息 · ' +
           s.word_count + ' 词</div>';
+        row.appendChild(txt);
+        if (s.has_audio) {
+          const btn = document.createElement('button');
+          btn.className = 'playBtn';
+          btn.textContent = '▶️';
+          btn.title = '播放录音';
+          btn.onclick = (e) => { e.stopPropagation(); toggleSessionAudio(s.id, btn); };
+          row.appendChild(btn);
+        }
         row.onclick = () => loadDetail(s.id);
         listEl.appendChild(row);
       }
